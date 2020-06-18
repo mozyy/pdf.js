@@ -186,6 +186,7 @@ function getViewerConfiguration() {
 }
 
 function webViewerLoad() {
+  localStorage.removeItem("pdfjs.history");
   const config = getViewerConfiguration();
   if (typeof PDFJSDev === "undefined" || !PDFJSDev.test("PRODUCTION")) {
     Promise.all([
@@ -229,6 +230,82 @@ function webViewerLoad() {
 
     pdfjsWebApp.PDFViewerApplication.run(config);
   }
+
+  function setupWebViewJavascriptBridge(callback) {
+    if (window.WebViewJavascriptBridge) {
+      return callback(window.WebViewJavascriptBridge);
+    }
+    if (window.WVJBCallbacks) {
+      return window.WVJBCallbacks.push(callback);
+    }
+    window.WVJBCallbacks = [callback];
+    const WVJBIframe = document.createElement("iframe");
+    WVJBIframe.style.display = "none";
+    WVJBIframe.src = "https://__bridge_loaded__";
+    document.documentElement.appendChild(WVJBIframe);
+    setTimeout(function () {
+      document.documentElement.removeChild(WVJBIframe);
+    }, 0);
+  }
+
+  let bridge = {
+    callHandler(handlerName, data) {
+      if (window.js_interface && window.js_interface[handlerName]) {
+        window.js_interface[handlerName](data);
+      }
+    },
+  };
+  if (/(iPhone|iPad|iPod|iOS)/i.test(navigator.userAgent)) {
+    setupWebViewJavascriptBridge(function (iosBridge) {
+      /* Initialize your app here */
+      bridge = iosBridge;
+      // bridge.registerHandler("JS Echo", function (data, responseCallback) {
+      //   console.log("JS Echo called with:", data);
+      //   responseCallback(data);
+      // });
+      // bridge.callHandler("ObjC Echo", { key: "value" }, function responseCallback(
+      //   responseData
+      // ) {
+      //   console.log("JS received response:", responseData);
+      // });
+    });
+  }
+
+  // 节流函数
+  // const timeout = null;
+  // const startTime = Date.now();
+  // const maxTimelong = 1000;
+  const vc = document.querySelector("#viewerContainer");
+  // pdf 查看完毕的回调
+  const scrollHandler = () => {
+    if (vc.scrollHeight - vc.scrollTop < vc.clientHeight + 10) {
+      console.log("call setBtnEnable");
+      if (/(iPhone|iPad|iPod|iOS)/i.test(navigator.userAgent)) {
+        bridge.callHandler("setBtnEnable");
+      } else {
+        if (window.js_interface && window.js_interface.setBtnEnable) {
+          window.js_interface.setBtnEnable();
+        }
+      }
+
+      // vc.removeEventListener("scroll", scrollHandlerWarp);
+    }
+  };
+
+  // const scrollHandlerWarp = () => {
+  //   if (timeout !== null) {
+  //     clearTimeout(timeout);
+  //     timeout = null;
+  //   }
+  //   const curTime = Date.now();
+  //   if (curTime - startTime >= maxTimelong) {
+  //     scrollHandler();
+  //     startTime = curTime;
+  //   } else {
+  //     timeout = setTimeout(scrollHandler, 300);
+  //   }
+  // };
+  vc.addEventListener("scroll", scrollHandler);
 }
 
 if (
