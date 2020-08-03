@@ -188,48 +188,6 @@ function getViewerConfiguration() {
 function webViewerLoad() {
   localStorage.removeItem("pdfjs.history");
   const config = getViewerConfiguration();
-  if (typeof PDFJSDev === "undefined" || !PDFJSDev.test("PRODUCTION")) {
-    Promise.all([
-      SystemJS.import("pdfjs-web/app.js"),
-      SystemJS.import("pdfjs-web/app_options.js"),
-      SystemJS.import("pdfjs-web/genericcom.js"),
-      SystemJS.import("pdfjs-web/pdf_print_service.js"),
-    ]).then(function ([app, appOptions, ...otherModules]) {
-      window.PDFViewerApplication = app.PDFViewerApplication;
-      window.PDFViewerApplicationOptions = appOptions.AppOptions;
-      app.PDFViewerApplication.run(config);
-    });
-  } else {
-    if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("CHROME")) {
-      pdfjsWebAppOptions.AppOptions.set("defaultUrl", defaultUrl);
-    }
-
-    window.PDFViewerApplication = pdfjsWebApp.PDFViewerApplication;
-    window.PDFViewerApplicationOptions = pdfjsWebAppOptions.AppOptions;
-
-    if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("GENERIC")) {
-      // Give custom implementations of the default viewer a simpler way to
-      // set various `AppOptions`, by dispatching an event once all viewer
-      // files are loaded but *before* the viewer initialization has run.
-      const event = document.createEvent("CustomEvent");
-      event.initCustomEvent("webviewerloaded", true, true, {
-        source: window,
-      });
-      try {
-        // Attempt to dispatch the event at the embedding `document`,
-        // in order to support cases where the viewer is embedded in
-        // a *dynamically* created <iframe> element.
-        parent.document.dispatchEvent(event);
-      } catch (ex) {
-        // The viewer could be in e.g. a cross-origin <iframe> element,
-        // fallback to dispatching the event at the current `document`.
-        console.error(`webviewerloaded: ${ex}`);
-        document.dispatchEvent(event);
-      }
-    }
-
-    pdfjsWebApp.PDFViewerApplication.run(config);
-  }
 
   function setupWebViewJavascriptBridge(callback) {
     if (window.WebViewJavascriptBridge) {
@@ -263,7 +221,8 @@ function webViewerLoad() {
       //   console.log("JS Echo called with:", data);
       //   responseCallback(data);
       // });
-      // bridge.callHandler("ObjC Echo", { key: "value" }, function responseCallback(
+      // bridge.callHandler("ObjC Echo", { key: "value" },
+      // function responseCallback(
       //   responseData
       // ) {
       //   console.log("JS received response:", responseData);
@@ -287,10 +246,74 @@ function webViewerLoad() {
           window.js_interface.setBtnEnable();
         }
       }
-
       // vc.removeEventListener("scroll", scrollHandlerWarp);
     }
   };
+
+  if (typeof PDFJSDev === "undefined" || !PDFJSDev.test("PRODUCTION")) {
+    Promise.all([
+      SystemJS.import("pdfjs-web/app.js"),
+      SystemJS.import("pdfjs-web/app_options.js"),
+      SystemJS.import("pdfjs-web/genericcom.js"),
+      SystemJS.import("pdfjs-web/pdf_print_service.js"),
+    ]).then(function ([app, appOptions, ...otherModules]) {
+      window.PDFViewerApplication = app.PDFViewerApplication;
+      window.PDFViewerApplicationOptions = appOptions.AppOptions;
+      app.PDFViewerApplication.run(config);
+
+      window.PDFViewerApplication.initializedPromise.then(() => {
+        window.PDFViewerApplication.eventBus.on("updateviewarea", () => {
+          // console.log(1111111);
+          scrollHandler();
+        });
+        // Object.keys(window.PDFViewerApplication.eventBus._listeners).forEach(
+        //   key => {
+        //     window.PDFViewerApplication.eventBus.on(key, () => {
+        //       console.log(11, key);
+        //       const vc = document.querySelector("#viewerContainer");
+        //       const viewer = document.querySelector("#viewer");
+        //       console.log(vc.clientHeight, viewer.clientHeight);
+        //     });
+        //   }
+        // );
+      });
+    });
+  } else {
+    if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("CHROME")) {
+      pdfjsWebAppOptions.AppOptions.set("defaultUrl", defaultUrl);
+    }
+
+    window.PDFViewerApplication = pdfjsWebApp.PDFViewerApplication;
+    window.PDFViewerApplicationOptions = pdfjsWebAppOptions.AppOptions;
+
+    if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("GENERIC")) {
+      // Give custom implementations of the default viewer a simpler way to
+      // set various `AppOptions`, by dispatching an event once all viewer
+      // files are loaded but *before* the viewer initialization has run.
+      const event = document.createEvent("CustomEvent");
+      event.initCustomEvent("webviewerloaded", true, true, {
+        source: window,
+      });
+      try {
+        // Attempt to dispatch the event at the embedding `document`,
+        // in order to support cases where the viewer is embedded in
+        // a *dynamically* created <iframe> element.
+        parent.document.dispatchEvent(event);
+      } catch (ex) {
+        // The viewer could be in e.g. a cross-origin <iframe> element,
+        // fallback to dispatching the event at the current `document`.
+        console.error(`webviewerloaded: ${ex}`);
+        document.dispatchEvent(event);
+      }
+    }
+
+    pdfjsWebApp.PDFViewerApplication.run(config);
+    window.PDFViewerApplication.initializedPromise.then(() => {
+      window.PDFViewerApplication.eventBus.on("updateviewarea", () => {
+        scrollHandler();
+      });
+    });
+  }
 
   // const scrollHandlerWarp = () => {
   //   if (timeout !== null) {
@@ -305,7 +328,9 @@ function webViewerLoad() {
   //     timeout = setTimeout(scrollHandler, 300);
   //   }
   // };
-  vc.addEventListener("scroll", scrollHandler);
+  // vc.addEventListener("scroll", scrollHandler);
+  // window.PDFViewerApplication.initializedPromise.then(console.log);
+  // scrollHandler();
 }
 
 if (
