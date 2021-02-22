@@ -47,6 +47,7 @@ See https://github.com/adobe-type-tools/cmap-resources
 <!--#if !PRODUCTION-->
     <script src="../node_modules/systemjs/dist/system.js"></script>
     <script src="../systemjs.config.js"></script>
+    <script src="./vconsole.min.js"></script>
 <!--#endif-->
 
 <!--#if (GENERIC && !MINIFIED) -->
@@ -414,5 +415,14 @@ See https://github.com/adobe-type-tools/cmap-resources
 
     </div> <!-- outerContainer -->
     <div id="printContainer"></div>
+
+    <!-- loading -->
+    <div class="pdf-circular-loading">
+      <div class="pdf-circular-loading-box">
+        <svg class="pdf-circular-loading-svg" viewBox="22 22 44 44">
+          <circle class="pdf-circular-loading-circle" cx="44" cy="44" r="20.2" fill="none" stroke-width="3.6"></circle>
+        </svg>
+      </div>
+    </div>
   </body>
 </html>

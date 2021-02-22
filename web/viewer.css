@@ -1907,3 +1907,55 @@ html[dir='rtl'] #documentPropertiesOverlay .row > * {
     display: none;
   }
 }
+
+/* loading */
+.pdf-circular-loading {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: rgba(0,0,0,.5);
+  z-index: 10000;
+}
+.pdf-circular-loading-box {
+  width: 40px;
+  height: 40px;
+  color: white;
+  animation: pdf-circular-loading-box-keyframes 1.4s linear infinite;
+}
+.pdf-circular-loading-svg {
+
+}
+.pdf-circular-loading-circle {
+  animation: pdf-circular-loading-circle-keyframes 1.4s ease-in-out infinite;
+  stroke-dasharray: 80px, 200px;
+  stroke-dashoffset: 0px;
+  stroke: currentColor;
+}
+
+@keyframes pdf-circular-loading-box-keyframes {
+  0% {
+      transform-origin: 50% 50%;
+  }
+  100% {
+      transform: rotate(360deg);
+  }
+}
+@keyframes pdf-circular-loading-circle-keyframes {
+  0% {
+    stroke-dasharray: 1px, 200px;
+    stroke-dashoffset: 0px;
+  }
+  50% {
+      stroke-dasharray: 100px, 200px;
+      stroke-dashoffset: -15px;
+  }
+  100% {
+      stroke-dasharray: 100px, 200px;
+      stroke-dashoffset: -125px;
+  }
+}

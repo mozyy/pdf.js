@@ -1444,7 +1444,7 @@ gulp.task("server", function () {
 
   var WebServer = require("./test/webserver.js").WebServer;
   var server = new WebServer();
-  // server.host = "192.168.2.132"; // use local ip
+  server.host = "192.168.2.132"; // use local ip
   server.port = 8888;
   server.start();
 });

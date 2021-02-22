@@ -213,7 +213,7 @@ function webViewerLoad() {
       }
     },
   };
-  if (/(iPhone|iPad|iPod|iOS)/i.test(navigator.userAgent)) {
+  if (/(iPhone|iPad|iPod|iOS|Mac OS)/i.test(navigator.userAgent)) {
     setupWebViewJavascriptBridge(function (iosBridge) {
       /* Initialize your app here */
       bridge = iosBridge;
@@ -234,18 +234,20 @@ function webViewerLoad() {
   // const timeout = null;
   // const startTime = Date.now();
   // const maxTimelong = 1000;
+
   const vc = document.querySelector("#viewerContainer");
   // pdf 查看完毕的回调
   const scrollHandler = () => {
     if (vc.scrollHeight - vc.scrollTop < vc.clientHeight + 10) {
       console.log("call setBtnEnable");
-      if (/(iPhone|iPad|iPod|iOS)/i.test(navigator.userAgent)) {
+      if (/(iPhone|iPad|iPod|iOS|Mac OS)/i.test(navigator.userAgent)) {
         bridge.callHandler("setBtnEnable");
       } else {
         if (window.js_interface && window.js_interface.setBtnEnable) {
           window.js_interface.setBtnEnable();
         }
       }
+      parent.postMessage("setBtnEnable", "*");
       // vc.removeEventListener("scroll", scrollHandlerWarp);
     }
   };
@@ -260,22 +262,25 @@ function webViewerLoad() {
       window.PDFViewerApplication = app.PDFViewerApplication;
       window.PDFViewerApplicationOptions = appOptions.AppOptions;
       app.PDFViewerApplication.run(config);
-
       window.PDFViewerApplication.initializedPromise.then(() => {
+        window.PDFViewerApplication.eventBus.on("pagesinit", () => {
+          // 隐藏loading
+          document.querySelector(".pdf-circular-loading").style.display =
+            "none";
+        });
         window.PDFViewerApplication.eventBus.on("updateviewarea", () => {
-          // console.log(1111111);
           scrollHandler();
         });
-        // Object.keys(window.PDFViewerApplication.eventBus._listeners).forEach(
-        //   key => {
-        //     window.PDFViewerApplication.eventBus.on(key, () => {
-        //       console.log(11, key);
-        //       const vc = document.querySelector("#viewerContainer");
-        //       const viewer = document.querySelector("#viewer");
-        //       console.log(vc.clientHeight, viewer.clientHeight);
-        //     });
-        //   }
-        // );
+        Object.keys(window.PDFViewerApplication.eventBus._listeners).forEach(
+          key => {
+            window.PDFViewerApplication.eventBus.on(key, () => {
+              console.log(11, key);
+              // const vc = document.querySelector("#viewerContainer");
+              // const viewer = document.querySelector("#viewer");
+              // console.log(vc.clientHeight, viewer.clientHeight);
+            });
+          }
+        );
       });
     });
   } else {
@@ -309,6 +314,10 @@ function webViewerLoad() {
 
     pdfjsWebApp.PDFViewerApplication.run(config);
     window.PDFViewerApplication.initializedPromise.then(() => {
+      window.PDFViewerApplication.eventBus.on("pagesinit", () => {
+        // 隐藏loading
+        document.querySelector(".pdf-circular-loading").style.display = "none";
+      });
       window.PDFViewerApplication.eventBus.on("updateviewarea", () => {
         scrollHandler();
       });
