@@ -190,6 +190,10 @@ function webViewerLoad() {
   const config = getViewerConfiguration();
 
   function setupWebViewJavascriptBridge(callback) {
+    // 小程序里面返回空的函数 防止ios下面"未设置业务域名"的错误
+    if (navigator.userAgent.includes("miniProgram")) {
+      return callback({ callHandler() {} });
+    }
     if (window.WebViewJavascriptBridge) {
       return callback(window.WebViewJavascriptBridge);
     }
