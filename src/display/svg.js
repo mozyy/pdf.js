@@ -29,6 +29,7 @@ import {
 import { DOMSVGFactory } from "./display_utils.js";
 import { isNodeJS } from "../shared/is_node.js";
 
+/** @type {any} */
 let SVGGraphics = function () {
   throw new Error("Not implemented: SVGGraphics");
 };
@@ -1560,7 +1561,9 @@ if (typeof PDFJSDev === "undefined" || PDFJSDev.test("GENERIC")) {
     }
 
     paintImageXObject(objId) {
-      const imgData = this.objs.get(objId);
+      const imgData = objId.startsWith("g_")
+        ? this.commonObjs.get(objId)
+        : this.objs.get(objId);
       if (!imgData) {
         warn(`Dependent image with object ID ${objId} is not ready yet`);
         return;

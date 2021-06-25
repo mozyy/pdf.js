@@ -163,12 +163,16 @@ var JpegImage = (function JpegImageClosure() {
           } else if (nextByte === /* EOI = */ 0xd9) {
             if (parseDNLMarker) {
               // NOTE: only 8-bit JPEG images are supported in this decoder.
-              const maybeScanLines = blockRow * 8;
+              const maybeScanLines = blockRow * (frame.precision === 8 ? 8 : 0);
               // Heuristic to attempt to handle corrupt JPEG images with too
               // large `scanLines` parameter, by falling back to the currently
-              // parsed number of scanLines when it's at least one order of
-              // magnitude smaller than expected (fixes issue10880.pdf).
-              if (maybeScanLines > 0 && maybeScanLines < frame.scanLines / 10) {
+              // parsed number of scanLines when it's at least (approximately)
+              // one order of magnitude smaller than expected (fixes
+              // issue10880.pdf and issue10989.pdf).
+              if (
+                maybeScanLines > 0 &&
+                Math.round(frame.scanLines / maybeScanLines) >= 10
+              ) {
                 throw new DNLMarkerError(
                   "Found EOI marker (0xFFD9) while parsing scan data, " +
                     "possibly caused by incorrect `scanLines` parameter",
@@ -991,8 +995,10 @@ var JpegImage = (function JpegImageClosure() {
             var components = [],
               component;
             for (i = 0; i < selectorsCount; i++) {
-              var componentIndex = frame.componentIds[data[offset++]];
+              const index = data[offset++];
+              var componentIndex = frame.componentIds[index];
               component = frame.components[componentIndex];
+              component.index = index;
               var tableSpec = data[offset++];
               component.huffmanTableDC = huffmanTablesDC[tableSpec >> 4];
               component.huffmanTableAC = huffmanTablesAC[tableSpec & 15];
@@ -1088,6 +1094,7 @@ var JpegImage = (function JpegImageClosure() {
         }
 
         this.components.push({
+          index: component.index,
           output: buildComponentData(frame, component),
           scaleX: component.h / frame.maxH,
           scaleY: component.v / frame.maxV,
@@ -1181,6 +1188,14 @@ var JpegImage = (function JpegImageClosure() {
         if (this._colorTransform === 0) {
           // If the Adobe transform marker is not present and the image
           // dictionary has a 'ColorTransform' entry, explicitly set to `0`,
+          // then the colours should *not* be transformed.
+          return false;
+        } else if (
+          this.components[0].index === /* "R" = */ 0x52 &&
+          this.components[1].index === /* "G" = */ 0x47 &&
+          this.components[2].index === /* "B" = */ 0x42
+        ) {
+          // If the three components are indexed as RGB in ASCII
           // then the colours should *not* be transformed.
           return false;
         }
