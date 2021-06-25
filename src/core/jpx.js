@@ -12,6 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+/* eslint-disable no-var */
 
 import { BaseException, info, warn } from "../shared/util.js";
 import { log2, readUint16, readUint32 } from "./core_utils.js";
@@ -350,8 +351,8 @@ var JpxImage = (function JpxImageClosure() {
               }
               if (unsupported.length > 0) {
                 doNotRecover = true;
-                throw new Error(
-                  "Unsupported COD options (" + unsupported.join(", ") + ")"
+                warn(
+                  `JPX: Unsupported COD options (${unsupported.join(", ")}).`
                 );
               }
               if (context.mainHeader) {
@@ -391,6 +392,9 @@ var JpxImage = (function JpxImageClosure() {
               length = tile.dataEnd - position;
               parseTilePackets(context, data, position, length);
               break;
+            case 0xff53: // Coding style component (COC)
+              warn("JPX: Codestream code 0xFF53 (COC) is not implemented.");
+            /* falls through */
             case 0xff55: // Tile-part lengths, main header (TLM)
             case 0xff57: // Packet length, main header (PLM)
             case 0xff58: // Packet length, tile-part header (PLT)
@@ -398,10 +402,6 @@ var JpxImage = (function JpxImageClosure() {
               length = readUint16(data, position);
               // skipping content
               break;
-            case 0xff53: // Coding style component (COC)
-              throw new Error(
-                "Codestream code 0xFF53 (COC) is not implemented"
-              );
             default:
               throw new Error("Unknown codestream code: " + code.toString(16));
           }
@@ -411,7 +411,7 @@ var JpxImage = (function JpxImageClosure() {
         if (doNotRecover || this.failOnCorruptedImage) {
           throw new JpxError(e.message);
         } else {
-          warn("JPX: Trying to recover from: " + e.message);
+          warn(`JPX: Trying to recover from: "${e.message}".`);
         }
       }
       this.tiles = transformComponents(context);

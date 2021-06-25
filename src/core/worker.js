@@ -12,6 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+/* eslint-disable no-var */
 
 import {
   AbortException,
@@ -32,7 +33,7 @@ import {
   VerbosityLevel,
   warn,
 } from "../shared/util.js";
-import { clearPrimitiveCaches, Ref } from "./primitives.js";
+import { clearPrimitiveCaches, Dict, Ref } from "./primitives.js";
 import { LocalPdfManager, NetworkPdfManager } from "./pdf_manager.js";
 import { incrementalUpdate } from "./writer.js";
 import { isNodeJS } from "../shared/is_node.js";
@@ -138,18 +139,15 @@ class WorkerMessageHandler {
 
       // Ensure that (primarily) Node.js users won't accidentally attempt to use
       // a non-translated/non-polyfilled build of the library, since that would
-      // quickly fail anyway because of missing functionality (such as e.g.
-      // `ReadableStream` and `Promise.allSettled`).
+      // quickly fail anyway because of missing functionality.
       if (
         (typeof PDFJSDev === "undefined" || PDFJSDev.test("SKIP_BABEL")) &&
-        (typeof ReadableStream === "undefined" ||
-          typeof Promise.allSettled === "undefined")
+        typeof ReadableStream === "undefined"
       ) {
         throw new Error(
           "The browser/environment lacks native support for critical " +
-            "functionality used by the PDF.js library (e.g. " +
-            "`ReadableStream` and/or `Promise.allSettled`); " +
-            "please use an ES5-compatible build instead."
+            "functionality used by the PDF.js library (e.g. `ReadableStream`); " +
+            "please use an `es5`-build instead."
         );
       }
     }
@@ -479,6 +477,16 @@ class WorkerMessageHandler {
       return pdfManager.ensureCatalog("javaScript");
     });
 
+    handler.on("GetDocJSActions", function wphSetupGetDocJSActions(data) {
+      return pdfManager.ensureCatalog("jsActions");
+    });
+
+    handler.on("GetPageJSActions", function ({ pageIndex }) {
+      return pdfManager.getPage(pageIndex).then(function (page) {
+        return page.jsActions;
+      });
+    });
+
     handler.on("GetOutline", function wphSetupGetOutline(data) {
       return pdfManager.ensureCatalog("documentOutline");
     });
@@ -498,6 +506,10 @@ class WorkerMessageHandler {
       ]);
     });
 
+    handler.on("GetMarkInfo", function wphSetupGetMarkInfo(data) {
+      return pdfManager.ensureCatalog("markInfo");
+    });
+
     handler.on("GetData", function wphSetupGetData(data) {
       pdfManager.requestLoadedStream();
       return pdfManager.onLoadedStream().then(function (stream) {
@@ -515,122 +527,163 @@ class WorkerMessageHandler {
       });
     });
 
-    handler.on("SaveDocument", function ({
-      numPages,
-      annotationStorage,
-      filename,
-    }) {
-      pdfManager.requestLoadedStream();
-      const promises = [pdfManager.onLoadedStream()];
-      const document = pdfManager.pdfDocument;
-      for (let pageIndex = 0; pageIndex < numPages; pageIndex++) {
-        promises.push(
-          pdfManager.getPage(pageIndex).then(function (page) {
-            const task = new WorkerTask(`Save: page ${pageIndex}`);
-            return page.save(handler, task, annotationStorage);
-          })
-        );
-      }
+    handler.on("GetFieldObjects", function (data) {
+      return pdfManager.ensureDoc("fieldObjects");
+    });
 
-      return Promise.all(promises).then(([stream, ...refs]) => {
-        let newRefs = [];
-        for (const ref of refs) {
-          newRefs = ref
-            .filter(x => x !== null)
-            .reduce((a, b) => a.concat(b), newRefs);
-        }
+    handler.on("HasJSActions", function (data) {
+      return pdfManager.ensureDoc("hasJSActions");
+    });
 
-        if (newRefs.length === 0) {
-          // No new refs so just return the initial bytes
-          return stream.bytes;
-        }
-
-        const xref = document.xref;
-        let newXrefInfo = Object.create(null);
-        if (xref.trailer) {
-          // Get string info from Info in order to compute fileId
-          const _info = Object.create(null);
-          const xrefInfo = xref.trailer.get("Info") || null;
-          if (xrefInfo) {
-            xrefInfo.forEach((key, value) => {
-              if (isString(key) && isString(value)) {
-                _info[key] = stringToPDFString(value);
-              }
-            });
-          }
-
-          newXrefInfo = {
-            rootRef: xref.trailer.getRaw("Root") || null,
-            encrypt: xref.trailer.getRaw("Encrypt") || null,
-            newRef: xref.getNewRef(),
-            infoRef: xref.trailer.getRaw("Info") || null,
-            info: _info,
-            fileIds: xref.trailer.getRaw("ID") || null,
-            startXRef: document.startXRef,
-            filename,
-          };
-        }
-        xref.resetNewRef();
-
-        return incrementalUpdate(stream.bytes, newXrefInfo, newRefs);
-      });
+    handler.on("GetCalculationOrderIds", function (data) {
+      return pdfManager.ensureDoc("calculationOrderIds");
     });
 
     handler.on(
-      "GetOperatorList",
-      function wphSetupRenderPage(data, sink) {
-        var pageIndex = data.pageIndex;
-        pdfManager.getPage(pageIndex).then(function (page) {
-          var task = new WorkerTask(`GetOperatorList: page ${pageIndex}`);
-          startWorkerTask(task);
+      "SaveDocument",
+      function ({ numPages, annotationStorage, filename }) {
+        pdfManager.requestLoadedStream();
+        const promises = [
+          pdfManager.onLoadedStream(),
+          pdfManager.ensureCatalog("acroForm"),
+          pdfManager.ensureDoc("xref"),
+          pdfManager.ensureDoc("startXRef"),
+        ];
 
-          // NOTE: Keep this condition in sync with the `info` helper function.
-          const start = verbosity >= VerbosityLevel.INFOS ? Date.now() : 0;
+        for (let pageIndex = 0; pageIndex < numPages; pageIndex++) {
+          promises.push(
+            pdfManager.getPage(pageIndex).then(function (page) {
+              const task = new WorkerTask(`Save: page ${pageIndex}`);
+              startWorkerTask(task);
 
-          // Pre compile the pdf page and fetch the fonts/images.
-          page
-            .getOperatorList({
-              handler,
-              sink,
-              task,
-              intent: data.intent,
-              renderInteractiveForms: data.renderInteractiveForms,
-              annotationStorage: data.annotationStorage,
-            })
-            .then(
-              function (operatorListInfo) {
-                finishWorkerTask(task);
-
-                if (start) {
-                  info(
-                    `page=${pageIndex + 1} - getOperatorList: time=` +
-                      `${Date.now() - start}ms, len=${operatorListInfo.length}`
-                  );
-                }
-                sink.close();
-              },
-              function (reason) {
-                finishWorkerTask(task);
-                if (task.terminated) {
-                  return; // ignoring errors from the terminated thread
-                }
-                // For compatibility with older behavior, generating unknown
-                // unsupported feature notification on errors.
-                handler.send("UnsupportedFeature", {
-                  featureId: UNSUPPORTED_FEATURES.errorOperatorList,
+              return page
+                .save(handler, task, annotationStorage)
+                .finally(function () {
+                  finishWorkerTask(task);
                 });
+            })
+          );
+        }
 
-                sink.error(reason);
+        return Promise.all(promises).then(function ([
+          stream,
+          acroForm,
+          xref,
+          startXRef,
+          ...refs
+        ]) {
+          let newRefs = [];
+          for (const ref of refs) {
+            newRefs = ref
+              .filter(x => x !== null)
+              .reduce((a, b) => a.concat(b), newRefs);
+          }
 
-                // TODO: Should `reason` be re-thrown here (currently that
-                //       casues "Uncaught exception: ..." messages in the
-                //       console)?
+          if (newRefs.length === 0) {
+            // No new refs so just return the initial bytes
+            return stream.bytes;
+          }
+
+          const xfa = (acroForm instanceof Dict && acroForm.get("XFA")) || [];
+          let xfaDatasets = null;
+          if (Array.isArray(xfa)) {
+            for (let i = 0, ii = xfa.length; i < ii; i += 2) {
+              if (xfa[i] === "datasets") {
+                xfaDatasets = xfa[i + 1];
               }
-            );
+            }
+          } else {
+            // TODO: Support XFA streams.
+            warn("Unsupported XFA type.");
+          }
+
+          let newXrefInfo = Object.create(null);
+          if (xref.trailer) {
+            // Get string info from Info in order to compute fileId.
+            const infoObj = Object.create(null);
+            const xrefInfo = xref.trailer.get("Info") || null;
+            if (xrefInfo instanceof Dict) {
+              xrefInfo.forEach((key, value) => {
+                if (isString(key) && isString(value)) {
+                  infoObj[key] = stringToPDFString(value);
+                }
+              });
+            }
+
+            newXrefInfo = {
+              rootRef: xref.trailer.getRaw("Root") || null,
+              encrypt: xref.trailer.getRaw("Encrypt") || null,
+              newRef: xref.getNewRef(),
+              infoRef: xref.trailer.getRaw("Info") || null,
+              info: infoObj,
+              fileIds: xref.trailer.getRaw("ID") || null,
+              startXRef,
+              filename,
+            };
+          }
+          xref.resetNewRef();
+
+          return incrementalUpdate({
+            originalData: stream.bytes,
+            xrefInfo: newXrefInfo,
+            newRefs,
+            xref,
+            datasetsRef: xfaDatasets,
+          });
         });
-      },
-      this
+      }
     );
+
+    handler.on("GetOperatorList", function wphSetupRenderPage(data, sink) {
+      var pageIndex = data.pageIndex;
+      pdfManager.getPage(pageIndex).then(function (page) {
+        var task = new WorkerTask(`GetOperatorList: page ${pageIndex}`);
+        startWorkerTask(task);
+
+        // NOTE: Keep this condition in sync with the `info` helper function.
+        const start = verbosity >= VerbosityLevel.INFOS ? Date.now() : 0;
+
+        // Pre compile the pdf page and fetch the fonts/images.
+        page
+          .getOperatorList({
+            handler,
+            sink,
+            task,
+            intent: data.intent,
+            renderInteractiveForms: data.renderInteractiveForms,
+            annotationStorage: data.annotationStorage,
+          })
+          .then(
+            function (operatorListInfo) {
+              finishWorkerTask(task);
+
+              if (start) {
+                info(
+                  `page=${pageIndex + 1} - getOperatorList: time=` +
+                    `${Date.now() - start}ms, len=${operatorListInfo.length}`
+                );
+              }
+              sink.close();
+            },
+            function (reason) {
+              finishWorkerTask(task);
+              if (task.terminated) {
+                return; // ignoring errors from the terminated thread
+              }
+              // For compatibility with older behavior, generating unknown
+              // unsupported feature notification on errors.
+              handler.send("UnsupportedFeature", {
+                featureId: UNSUPPORTED_FEATURES.errorOperatorList,
+              });
+
+              sink.error(reason);
+
+              // TODO: Should `reason` be re-thrown here (currently that casues
+              //       "Uncaught exception: ..." messages in the console)?
+            }
+          );
+      });
+    });
 
     handler.on("GetTextContent", function wphExtractText(data, sink) {
       var pageIndex = data.pageIndex;
@@ -747,4 +800,4 @@ if (
   WorkerMessageHandler.initializeFromPort(self);
 }
 
-export { WorkerTask, WorkerMessageHandler };
+export { WorkerMessageHandler, WorkerTask };

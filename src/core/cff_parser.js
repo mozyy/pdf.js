@@ -12,6 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+/* eslint-disable no-var */
 
 import {
   bytesToString,
@@ -1406,6 +1407,12 @@ class CFFCompiler {
       }
     }
 
+    const xuid = cff.topDict.getByName("XUID");
+    if (xuid && xuid.length > 16) {
+      // Length of XUID array must not be greater than 16 (issue #12399).
+      cff.topDict.removeByName("XUID");
+    }
+
     cff.topDict.setByName("charset", 0);
     var compiled = this.compileTopDicts(
       [cff.topDict],
@@ -1906,15 +1913,15 @@ class CFFCompiler {
 }
 
 export {
-  CFFStandardStrings,
-  CFFParser,
   CFF,
-  CFFHeader,
-  CFFStrings,
-  CFFIndex,
   CFFCharset,
-  CFFTopDict,
-  CFFPrivateDict,
   CFFCompiler,
   CFFFDSelect,
+  CFFHeader,
+  CFFIndex,
+  CFFParser,
+  CFFPrivateDict,
+  CFFStandardStrings,
+  CFFStrings,
+  CFFTopDict,
 };

@@ -12,6 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+/* eslint-disable no-var */
 
 import {
   bytesToString,
@@ -1955,11 +1956,11 @@ export {
   AES128Cipher,
   AES256Cipher,
   ARCFourCipher,
-  CipherTransformFactory,
-  PDF17,
-  PDF20,
   calculateMD5,
   calculateSHA256,
   calculateSHA384,
   calculateSHA512,
+  CipherTransformFactory,
+  PDF17,
+  PDF20,
 };

@@ -65,6 +65,11 @@ const defaultOptions = {
     value: false,
     kind: OptionKind.VIEWER + OptionKind.PREFERENCE,
   },
+  enableScripting: {
+    /** @type {boolean} */
+    value: typeof PDFJSDev !== "undefined" && PDFJSDev.test("TESTING"),
+    kind: OptionKind.VIEWER + OptionKind.PREFERENCE,
+  },
   enableWebGL: {
     /** @type {boolean} */
     value: false,
@@ -147,6 +152,11 @@ const defaultOptions = {
   useOnlyCssZoom: {
     /** @type {boolean} */
     value: false,
+    kind: OptionKind.VIEWER + OptionKind.PREFERENCE,
+  },
+  viewerCssTheme: {
+    /** @type {number} */
+    value: 0,
     kind: OptionKind.VIEWER + OptionKind.PREFERENCE,
   },
   viewOnLoad: {
@@ -239,12 +249,26 @@ if (
 ) {
   defaultOptions.disablePreferences = {
     /** @type {boolean} */
-    value: false,
+    value: typeof PDFJSDev !== "undefined" && PDFJSDev.test("TESTING"),
     kind: OptionKind.VIEWER,
   };
   defaultOptions.locale = {
     /** @type {string} */
     value: typeof navigator !== "undefined" ? navigator.language : "en-US",
+    kind: OptionKind.VIEWER,
+  };
+  defaultOptions.sandboxBundleSrc = {
+    /** @type {string} */
+    value:
+      typeof PDFJSDev === "undefined" || !PDFJSDev.test("PRODUCTION")
+        ? "../build/dev-sandbox/pdf.sandbox.js"
+        : "../build/pdf.sandbox.js",
+    kind: OptionKind.VIEWER,
+  };
+} else if (PDFJSDev.test("CHROME")) {
+  defaultOptions.sandboxBundleSrc = {
+    /** @type {string} */
+    value: "../build/pdf.sandbox.js",
     kind: OptionKind.VIEWER,
   };
 }
@@ -302,6 +326,12 @@ class AppOptions {
 
   static set(name, value) {
     userOptions[name] = value;
+  }
+
+  static setAll(options) {
+    for (const name in options) {
+      userOptions[name] = options[name];
+    }
   }
 
   static remove(name) {

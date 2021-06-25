@@ -12,7 +12,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-/* eslint no-var: error */
 
 import {
   assert,
@@ -531,14 +530,20 @@ function isValidFetchUrl(url, baseUrl) {
 
 /**
  * @param {string} src
+ * @param {boolean} [removeScriptElement]
  * @returns {Promise<void>}
  */
-function loadScript(src) {
+function loadScript(src, removeScriptElement = false) {
   return new Promise((resolve, reject) => {
     const script = document.createElement("script");
     script.src = src;
 
-    script.onload = resolve;
+    script.onload = function (evt) {
+      if (removeScriptElement) {
+        script.remove();
+      }
+      resolve(evt);
+    };
     script.onerror = function () {
       reject(new Error(`Cannot load script at: ${script.src}`));
     };
@@ -579,16 +584,16 @@ class PDFDateString {
     if (!pdfDateStringRegex) {
       pdfDateStringRegex = new RegExp(
         "^D:" + // Prefix (required)
-        "(\\d{4})" + // Year (required)
-        "(\\d{2})?" + // Month (optional)
-        "(\\d{2})?" + // Day (optional)
-        "(\\d{2})?" + // Hour (optional)
-        "(\\d{2})?" + // Minute (optional)
-        "(\\d{2})?" + // Second (optional)
-        "([Z|+|-])?" + // Universal time relation (optional)
-        "(\\d{2})?" + // Offset hour (optional)
-        "'?" + // Splitting apostrophe (optional)
-        "(\\d{2})?" + // Offset minute (optional)
+          "(\\d{4})" + // Year (required)
+          "(\\d{2})?" + // Month (optional)
+          "(\\d{2})?" + // Day (optional)
+          "(\\d{2})?" + // Hour (optional)
+          "(\\d{2})?" + // Minute (optional)
+          "(\\d{2})?" + // Second (optional)
+          "([Z|+|-])?" + // Universal time relation (optional)
+          "(\\d{2})?" + // Offset hour (optional)
+          "'?" + // Splitting apostrophe (optional)
+          "(\\d{2})?" + // Offset minute (optional)
           "'?" // Trailing apostrophe (optional)
       );
     }
@@ -637,21 +642,21 @@ class PDFDateString {
 }
 
 export {
-  PageViewport,
-  RenderingCancelledException,
   addLinkAttributes,
-  getFilenameFromUrl,
-  LinkTarget,
-  DEFAULT_LINK_REL,
   BaseCanvasFactory,
-  DOMCanvasFactory,
   BaseCMapReaderFactory,
+  DEFAULT_LINK_REL,
+  deprecated,
+  DOMCanvasFactory,
   DOMCMapReaderFactory,
   DOMSVGFactory,
-  StatTimer,
+  getFilenameFromUrl,
   isFetchSupported,
   isValidFetchUrl,
+  LinkTarget,
   loadScript,
-  deprecated,
+  PageViewport,
   PDFDateString,
+  RenderingCancelledException,
+  StatTimer,
 };

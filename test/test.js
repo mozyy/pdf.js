@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-/* eslint-disable object-shorthand */
 
 "use strict";
 
@@ -254,7 +253,7 @@ function startRefTest(masterMode, showRefImages) {
     onAllSessionsClosed = finalize;
 
     const startUrl = `http://${host}:${server.port}/test/test_slave.html`;
-    startBrowsers(startUrl, function (session) {
+    startBrowsers(function (session) {
       session.masterMode = masterMode;
       session.taskResults = {};
       session.tasks = {};
@@ -271,7 +270,7 @@ function startRefTest(masterMode, showRefImages) {
       session.numEqNoSnapshot = 0;
       session.numEqFailures = 0;
       monitorBrowserTimeout(session, handleSessionTimeout);
-    });
+    }, makeTestUrl(startUrl));
   }
   function checkRefsTmp() {
     if (masterMode && fs.existsSync(refsTmpDir)) {
@@ -467,9 +466,14 @@ function checkFBF(task, results, browser, masterMode) {
       continue;
     }
     if (r0Page.snapshot !== r1Page.snapshot) {
-      // The FBF tests fail intermittently in Google Chrome when run on the
-      // bots, ignoring `makeref` failures for now; see https://github.com/mozilla/pdf.js/pull/11491
-      if (masterMode && /chrom(e|ium)/i.test(browser)) {
+      // The FBF tests fail intermittently in Firefox and Google Chrome when run
+      // on the bots, ignoring `makeref` failures for now; see
+      //  - https://github.com/mozilla/pdf.js/pull/12368
+      //  - https://github.com/mozilla/pdf.js/pull/11491
+      //
+      // TODO: Figure out why this happens, so that we can remove the hack; see
+      //       https://github.com/mozilla/pdf.js/issues/12371
+      if (masterMode) {
         console.log(
           "TEST-SKIPPED | forward-back-forward test " +
             task.id +
@@ -641,15 +645,15 @@ function refTestPostHandler(req, res) {
     }
 
     taskResults[round][page] = {
-      failure: failure,
-      snapshot: snapshot,
+      failure,
+      snapshot,
     };
     if (stats) {
       stats.push({
-        browser: browser,
+        browser,
         pdf: id,
-        page: page,
-        round: round,
+        page,
+        round,
         stats: data.stats,
       });
     }
@@ -665,11 +669,9 @@ function refTestPostHandler(req, res) {
   return true;
 }
 
-function startUnitTest(testUrl, name) {
-  var startTime = Date.now();
-  startServer();
-  server.hooks.POST.push(unitTestPostHandler);
-  onAllSessionsClosed = function () {
+function onAllSessionsClosedAfterTests(name) {
+  const startTime = Date.now();
+  return function () {
     stopServer();
     var numRuns = 0,
       numErrors = 0;
@@ -688,12 +690,53 @@ function startUnitTest(testUrl, name) {
     var runtime = (Date.now() - startTime) / 1000;
     console.log(name + " tests runtime was " + runtime.toFixed(1) + " seconds");
   };
+}
+
+function makeTestUrl(startUrl) {
+  return function (browserName) {
+    const queryParameters =
+      `?browser=${encodeURIComponent(browserName)}` +
+      `&manifestFile=${encodeURIComponent("/test/" + options.manifestFile)}` +
+      `&testFilter=${JSON.stringify(options.testfilter)}` +
+      `&delay=${options.statsDelay}` +
+      `&masterMode=${options.masterMode}`;
+    return startUrl + queryParameters;
+  };
+}
+
+function startUnitTest(testUrl, name) {
+  onAllSessionsClosed = onAllSessionsClosedAfterTests(name);
+  startServer();
+  server.hooks.POST.push(unitTestPostHandler);
 
   const startUrl = `http://${host}:${server.port}${testUrl}`;
-  startBrowsers(startUrl, function (session) {
+  startBrowsers(function (session) {
+    session.numRuns = 0;
+    session.numErrors = 0;
+  }, makeTestUrl(startUrl));
+}
+
+function startIntegrationTest() {
+  onAllSessionsClosed = onAllSessionsClosedAfterTests("integration");
+  startServer();
+
+  const { runTests } = require("./integration-boot.js");
+  startBrowsers(function (session) {
     session.numRuns = 0;
     session.numErrors = 0;
   });
+  global.integrationBaseUrl = `http://${host}:${server.port}/build/generic/web/viewer.html`;
+  global.integrationSessions = sessions;
+
+  Promise.all(sessions.map(session => session.browserPromise)).then(
+    async () => {
+      const results = { runs: 0, failures: 0 };
+      await runTests(results);
+      sessions[0].numRuns = results.runs;
+      sessions[0].numErrors = results.failures;
+      await Promise.all(sessions.map(session => closeSession(session.name)));
+    }
+  );
 }
 
 function unitTestPostHandler(req, res) {
@@ -763,12 +806,11 @@ function unitTestPostHandler(req, res) {
   return true;
 }
 
-async function startBrowser(browserName, startUrl) {
-  const revisions = require("puppeteer/package.json").puppeteer;
+async function startBrowser(browserName, startUrl = "") {
+  const revisions = require("puppeteer/lib/cjs/puppeteer/revisions.js")
+    .PUPPETEER_REVISIONS;
   const wantedRevision =
-    browserName === "chrome"
-      ? revisions.chrome_revision
-      : revisions.firefox_revision;
+    browserName === "chrome" ? revisions.chromium : revisions.firefox;
 
   // Remove other revisions than the one we want to use. Updating Puppeteer can
   // cause a new revision to be used, and not removing older revisions causes
@@ -786,22 +828,58 @@ async function startBrowser(browserName, startUrl) {
     }
   }
 
-  const browser = await puppeteer.launch({
+  const options = {
     product: browserName,
     headless: false,
     defaultViewport: null,
-    // Firefox must complete its execution before starting, mainly on Windows.
-    // Refer to https://github.com/puppeteer/puppeteer/issues/5376 and
-    // https://phabricator.services.mozilla.com/D6702.
-    args: browserName === "firefox" ? ["--wait-for-browser"] : [],
-  });
-  const pages = await browser.pages();
-  const page = pages[0];
-  await page.goto(startUrl, { timeout: 0 });
+    ignoreDefaultArgs: ["--disable-extensions"],
+  };
+
+  if (!tempDir) {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pdfjs-"));
+  }
+  const printFile = path.join(tempDir, "print.pdf");
+
+  if (browserName === "chrome") {
+    // avoid crash
+    options.args = ["--no-sandbox", "--disable-setuid-sandbox"];
+    // silent printing in a pdf
+    options.args.push("--kiosk-printing");
+  }
+
+  if (browserName === "firefox") {
+    options.extraPrefsFirefox = {
+      // avoid to have a prompt when leaving a page with a form
+      "dom.disable_beforeunload": true,
+      // Disable dialog when saving a pdf
+      "pdfjs.disabled": true,
+      "browser.helperApps.neverAsk.saveToDisk": "application/pdf",
+      // Avoid popup when saving is done
+      "browser.download.panel.shown": true,
+      // Save file in output
+      "browser.download.folderList": 2,
+      "browser.download.dir": tempDir,
+      // Print silently in a pdf
+      "print.always_print_silent": true,
+      "print.show_print_progress": false,
+      print_printer: "PDF",
+      "print.printer_PDF.print_to_file": true,
+      "print.printer_PDF.print_to_filename": printFile,
+    };
+  }
+
+  const browser = await puppeteer.launch(options);
+
+  if (startUrl) {
+    const pages = await browser.pages();
+    const page = pages[0];
+    await page.goto(startUrl, { timeout: 0 });
+  }
+
   return browser;
 }
 
-function startBrowsers(rootUrl, initSessionCallback) {
+function startBrowsers(initSessionCallback, makeStartUrl = null) {
   const browserNames = options.noChrome ? ["firefox"] : ["firefox", "chrome"];
 
   sessions = [];
@@ -820,16 +898,9 @@ function startBrowsers(rootUrl, initSessionCallback) {
       closed: false,
     };
     sessions.push(session);
+    const startUrl = makeStartUrl ? makeStartUrl(browserName) : "";
 
-    const queryParameters =
-      `?browser=${encodeURIComponent(browserName)}` +
-      `&manifestFile=${encodeURIComponent("/test/" + options.manifestFile)}` +
-      `&testFilter=${JSON.stringify(options.testfilter)}` +
-      `&delay=${options.statsDelay}` +
-      `&masterMode=${options.masterMode}`;
-    const startUrl = rootUrl + queryParameters;
-
-    startBrowser(browserName, startUrl)
+    session.browserPromise = startBrowser(browserName, startUrl)
       .then(function (browser) {
         session.browser = browser;
         if (initSessionCallback) {
@@ -877,8 +948,15 @@ async function closeSession(browser) {
     const allClosed = sessions.every(function (s) {
       return s.closed;
     });
-    if (allClosed && onAllSessionsClosed) {
-      onAllSessionsClosed();
+    if (allClosed) {
+      if (tempDir) {
+        const rimraf = require("rimraf");
+        rimraf.sync(tempDir);
+      }
+
+      if (onAllSessionsClosed) {
+        onAllSessionsClosed();
+      }
     }
   }
 }
@@ -920,6 +998,8 @@ function main() {
     });
   } else if (options.fontTest) {
     startUnitTest("/test/font/font_test.html", "font");
+  } else if (options.integration) {
+    startIntegrationTest();
   } else {
     startRefTest(options.masterMode, options.reftest);
   }
@@ -931,5 +1011,6 @@ var onAllSessionsClosed;
 var host = "127.0.0.1";
 var options = parseOptions();
 var stats;
+var tempDir = null;
 
 main();

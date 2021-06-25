@@ -12,7 +12,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-/* eslint no-var: error */
 
 import { getLookupTableFactory } from "./core_utils.js";
 
@@ -765,11 +764,11 @@ const getSupplementalGlyphMapForCalibri = getLookupTableFactory(function (t) {
 });
 
 export {
-  getStdFontMap,
+  getGlyphMapForStandardFonts,
   getNonStdFontMap,
   getSerifFonts,
-  getSymbolsFonts,
-  getGlyphMapForStandardFonts,
+  getStdFontMap,
   getSupplementalGlyphMapForArialBlack,
   getSupplementalGlyphMapForCalibri,
+  getSymbolsFonts,
 };

@@ -12,6 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+/* eslint-disable no-var */
 
 import { assert, BaseException, warn } from "../shared/util.js";
 import { readUint16 } from "./core_utils.js";
@@ -1062,7 +1063,7 @@ var JpegImage = (function JpegImageClosure() {
               offset = nextFileMarker.offset;
               break;
             }
-            if (offset >= data.length - 1) {
+            if (!nextFileMarker || offset >= data.length - 1) {
               warn(
                 "JpegImage.parse - reached the end of the image data " +
                   "without finding an EOI marker (0xFFD9)."

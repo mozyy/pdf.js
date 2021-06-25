@@ -18,6 +18,7 @@
  * of XPDF's implementation, made available under the Apache 2.0 open source
  * license.
  */
+/* eslint-disable no-var */
 
 import { FormatError, stringToBytes, unreachable } from "../shared/util.js";
 import { isDict } from "./primitives.js";
@@ -167,6 +168,11 @@ var DecodeStream = (function DecodeStreamClosure() {
   }
 
   DecodeStream.prototype = {
+    // eslint-disable-next-line getter-return
+    get length() {
+      unreachable("Should not access DecodeStream.length");
+    },
+
     get isEmpty() {
       while (!this.eof && this.bufferLength === 0) {
         this.readBlock();
@@ -1335,14 +1341,14 @@ var NullStream = (function NullStreamClosure() {
 export {
   Ascii85Stream,
   AsciiHexStream,
-  DecryptStream,
   DecodeStream,
+  DecryptStream,
   FlateStream,
+  LZWStream,
   NullStream,
   PredictorStream,
   RunLengthStream,
   Stream,
   StreamsSequenceStream,
   StringStream,
-  LZWStream,
 };

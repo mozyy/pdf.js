@@ -12,6 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+/* eslint-disable no-var */
 
 import { Dict, isDict, isStream, Ref } from "./primitives.js";
 import {
@@ -19,6 +20,7 @@ import {
   info,
   isBool,
   IsEvalSupportedCached,
+  shadow,
   unreachable,
 } from "../shared/util.js";
 import { PostScriptLexer, PostScriptParser } from "./ps_parser.js";
@@ -28,7 +30,6 @@ class PDFFunctionFactory {
   constructor({ xref, isEvalSupported = true }) {
     this.xref = xref;
     this.isEvalSupported = isEvalSupported !== false;
-    this._localFunctionCache = null; // Initialized lazily.
   }
 
   create(fn) {
@@ -75,9 +76,6 @@ class PDFFunctionFactory {
       fnRef = cacheKey.dict && cacheKey.dict.objId;
     }
     if (fnRef) {
-      if (!this._localFunctionCache) {
-        this._localFunctionCache = new LocalFunctionCache();
-      }
       const localFunction = this._localFunctionCache.getByRef(fnRef);
       if (localFunction) {
         return localFunction;
@@ -104,11 +102,15 @@ class PDFFunctionFactory {
       fnRef = cacheKey.dict && cacheKey.dict.objId;
     }
     if (fnRef) {
-      if (!this._localFunctionCache) {
-        this._localFunctionCache = new LocalFunctionCache();
-      }
       this._localFunctionCache.set(/* name = */ null, fnRef, parsedFunction);
     }
+  }
+
+  /**
+   * @private
+   */
+  get _localFunctionCache() {
+    return shadow(this, "_localFunctionCache", new LocalFunctionCache());
   }
 }
 
@@ -1344,6 +1346,6 @@ var PostScriptCompiler = (function PostScriptCompilerClosure() {
 export {
   isPDFFunction,
   PDFFunctionFactory,
-  PostScriptEvaluator,
   PostScriptCompiler,
+  PostScriptEvaluator,
 };

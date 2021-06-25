@@ -172,7 +172,6 @@ class PDFAttachmentViewer extends BaseTreeViewer {
 
       const element = document.createElement("a");
       if (
-        (typeof PDFJSDev === "undefined" || !PDFJSDev.test("MOZCENTRAL")) &&
         PdfFileRegExp.test(filename) &&
         !viewerCompatibilityParams.disableCreateObjectURL
       ) {
@@ -188,9 +187,7 @@ class PDFAttachmentViewer extends BaseTreeViewer {
       attachmentsCount++;
     }
 
-    this.container.appendChild(fragment);
-
-    this._dispatchEvent(attachmentsCount);
+    this._finishRendering(fragment, attachmentsCount);
   }
 
   /**

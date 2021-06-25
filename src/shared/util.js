@@ -12,7 +12,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-/* eslint no-var: error */
 
 import "./compatibility.js";
 
@@ -143,6 +142,36 @@ const AnnotationBorderStyleType = {
   BEVELED: 3,
   INSET: 4,
   UNDERLINE: 5,
+};
+
+const AnnotationActionEventType = {
+  E: "Mouse Enter",
+  X: "Mouse Exit",
+  D: "Mouse Down",
+  U: "Mouse Up",
+  Fo: "Focus",
+  Bl: "Blur",
+  PO: "PageOpen",
+  PC: "PageClose",
+  PV: "PageVisible",
+  PI: "PageInvisible",
+  K: "Keystroke",
+  F: "Format",
+  V: "Validate",
+  C: "Calculate",
+};
+
+const DocumentActionEventType = {
+  WC: "WillClose",
+  WS: "WillSave",
+  DS: "DidSave",
+  WP: "WillPrint",
+  DP: "DidPrint",
+};
+
+const PageActionEventType = {
+  O: "PageOpen",
+  C: "PageClose",
 };
 
 const StreamType = {
@@ -564,6 +593,15 @@ function string32(value) {
   );
 }
 
+function objectSize(obj) {
+  return Object.keys(obj).length;
+}
+
+// Ensures that the returned Object has a `null` prototype.
+function objectFromEntries(iterable) {
+  return Object.assign(Object.create(null), Object.fromEntries(iterable));
+}
+
 // Checks the endianness of the platform.
 function isLittleEndian() {
   const buffer8 = new Uint8Array(4);
@@ -592,16 +630,13 @@ const IsEvalSupportedCached = {
   },
 };
 
-const rgbBuf = ["rgb(", 0, ",", 0, ",", 0, ")"];
+const hexNumbers = [...Array(256).keys()].map(n =>
+  n.toString(16).padStart(2, "0")
+);
 
 class Util {
-  // makeCssRgb() can be called thousands of times. Using ´rgbBuf` avoids
-  // creating many intermediate strings.
-  static makeCssRgb(r, g, b) {
-    rgbBuf[1] = r;
-    rgbBuf[3] = g;
-    rgbBuf[5] = b;
-    return rgbBuf.join("");
+  static makeHexColor(r, g, b) {
+    return `#${hexNumbers[r]}${hexNumbers[g]}${hexNumbers[b]}`;
   }
 
   // Concatenates two transformation matrices together and returns the result.
@@ -794,9 +829,31 @@ function stringToPDFString(str) {
 }
 
 function escapeString(str) {
-  // replace "(", ")" and "\" by "\(", "\)" and "\\"
+  // replace "(", ")", "\n", "\r" and "\"
+  // by "\(", "\)", "\\n", "\\r" and "\\"
   // in order to write it in a PDF file.
-  return str.replace(/([\(\)\\])/g, "\\$1");
+  return str.replace(/([()\\\n\r])/g, match => {
+    if (match === "\n") {
+      return "\\n";
+    } else if (match === "\r") {
+      return "\\r";
+    }
+    return `\\${match}`;
+  });
+}
+
+function isAscii(str) {
+  return /^[\x00-\x7F]*$/.test(str);
+}
+
+function stringToUTF16BEString(str) {
+  const buf = ["\xFE\xFF"];
+  for (let i = 0, ii = str.length; i < ii; i++) {
+    const char = str.charCodeAt(i);
+    buf.push(String.fromCharCode((char >> 8) & 0xff));
+    buf.push(String.fromCharCode(char & 0xff));
+  }
+  return buf.join("");
 }
 
 function stringToUTF8String(str) {
@@ -832,11 +889,11 @@ function isArrayEqual(arr1, arr2) {
   });
 }
 
-function getModificationDate(date = new Date(Date.now())) {
+function getModificationDate(date = new Date()) {
   const buffer = [
     date.getUTCFullYear().toString(),
     (date.getUTCMonth() + 1).toString().padStart(2, "0"),
-    (date.getUTCDate() + 1).toString().padStart(2, "0"),
+    date.getUTCDate().toString().padStart(2, "0"),
     date.getUTCHours().toString().padStart(2, "0"),
     date.getUTCMinutes().toString().padStart(2, "0"),
     date.getUTCSeconds().toString().padStart(2, "0"),
@@ -910,13 +967,56 @@ const createObjectURL = (function createObjectURLClosure() {
   };
 })();
 
+const XMLEntities = {
+  /* < */ 0x3c: "&lt;",
+  /* > */ 0x3e: "&gt;",
+  /* & */ 0x26: "&amp;",
+  /* " */ 0x22: "&quot;",
+  /* ' */ 0x27: "&apos;",
+};
+
+function encodeToXmlString(str) {
+  const buffer = [];
+  let start = 0;
+  for (let i = 0, ii = str.length; i < ii; i++) {
+    const char = str.codePointAt(i);
+    if (0x20 <= char && char <= 0x7e) {
+      // ascii
+      const entity = XMLEntities[char];
+      if (entity) {
+        if (start < i) {
+          buffer.push(str.substring(start, i));
+        }
+        buffer.push(entity);
+        start = i + 1;
+      }
+    } else {
+      if (start < i) {
+        buffer.push(str.substring(start, i));
+      }
+      buffer.push(`&#x${char.toString(16).toUpperCase()};`);
+      if (char > 0xd7ff && (char < 0xe000 || char > 0xfffd)) {
+        // char is represented by two u16
+        i++;
+      }
+      start = i + 1;
+    }
+  }
+
+  if (buffer.length === 0) {
+    return str;
+  }
+
+  if (start < str.length) {
+    buffer.push(str.substring(start, str.length));
+  }
+
+  return buffer.join("");
+}
+
 export {
-  BaseException,
-  FONT_IDENTITY_MATRIX,
-  IDENTITY_MATRIX,
-  OPS,
-  VerbosityLevel,
-  UNSUPPORTED_FEATURES,
+  AbortException,
+  AnnotationActionEventType,
   AnnotationBorderStyleType,
   AnnotationFieldFlag,
   AnnotationFlag,
@@ -925,48 +1025,60 @@ export {
   AnnotationReviewState,
   AnnotationStateModelType,
   AnnotationType,
-  FontType,
-  ImageKind,
-  CMapCompressionType,
-  AbortException,
-  InvalidPDFException,
-  MissingPDFException,
-  PasswordException,
-  PasswordResponses,
-  PermissionFlag,
-  StreamType,
-  TextRenderingMode,
-  UnexpectedResponseException,
-  UnknownErrorException,
-  Util,
-  FormatError,
   arrayByteLength,
   arraysToBytes,
   assert,
+  BaseException,
   bytesToString,
-  createPromiseCapability,
+  CMapCompressionType,
   createObjectURL,
+  createPromiseCapability,
+  createValidAbsoluteUrl,
+  DocumentActionEventType,
+  encodeToXmlString,
   escapeString,
+  FONT_IDENTITY_MATRIX,
+  FontType,
+  FormatError,
   getModificationDate,
   getVerbosityLevel,
+  IDENTITY_MATRIX,
+  ImageKind,
   info,
+  InvalidPDFException,
   isArrayBuffer,
   isArrayEqual,
+  isAscii,
   isBool,
-  isNum,
-  isString,
-  isSameOrigin,
-  createValidAbsoluteUrl,
-  IsLittleEndianCached,
   IsEvalSupportedCached,
+  IsLittleEndianCached,
+  isNum,
+  isSameOrigin,
+  isString,
+  MissingPDFException,
+  objectFromEntries,
+  objectSize,
+  OPS,
+  PageActionEventType,
+  PasswordException,
+  PasswordResponses,
+  PermissionFlag,
   removeNullCharacters,
   setVerbosityLevel,
   shadow,
+  StreamType,
   string32,
   stringToBytes,
   stringToPDFString,
+  stringToUTF16BEString,
   stringToUTF8String,
-  utf8StringToString,
-  warn,
+  TextRenderingMode,
+  UnexpectedResponseException,
+  UnknownErrorException,
   unreachable,
+  UNSUPPORTED_FEATURES,
+  utf8StringToString,
+  Util,
+  VerbosityLevel,
+  warn,
 };

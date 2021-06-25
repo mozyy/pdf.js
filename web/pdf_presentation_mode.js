@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-import { normalizeWheelEventDelta } from "./ui_utils.js";
+import { normalizeWheelEventDelta, PresentationModeState } from "./ui_utils.js";
 
 const DELAY_BEFORE_RESETTING_SWITCH_IN_PROGRESS = 1500; // in ms
 const DELAY_BEFORE_HIDING_CONTROLS = 3000; // in ms
@@ -92,8 +92,6 @@ class PDFPresentationMode {
       this.container.mozRequestFullScreen();
     } else if (this.container.webkitRequestFullscreen) {
       this.container.webkitRequestFullscreen(Element.ALLOW_KEYBOARD_INPUT);
-    } else if (this.container.msRequestFullscreen) {
-      this.container.msRequestFullscreen();
     } else {
       return false;
     }
@@ -140,7 +138,9 @@ class PDFPresentationMode {
       const totalDelta = this.mouseScrollDelta;
       this._resetMouseScrollState();
       const success =
-        totalDelta > 0 ? this._goToPreviousPage() : this._goToNextPage();
+        totalDelta > 0
+          ? this.pdfViewer.previousPage()
+          : this.pdfViewer.nextPage();
       if (success) {
         this.mouseScrollTimeStamp = currentTime;
       }
@@ -151,46 +151,42 @@ class PDFPresentationMode {
     return !!(
       document.fullscreenElement ||
       document.mozFullScreen ||
-      document.webkitIsFullScreen ||
-      document.msFullscreenElement
+      document.webkitIsFullScreen
     );
   }
 
   /**
    * @private
    */
-  _goToPreviousPage() {
-    const page = this.pdfViewer.currentPageNumber;
-    // If we're at the first page, we don't need to do anything.
-    if (page <= 1) {
-      return false;
-    }
-    this.pdfViewer.currentPageNumber = page - 1;
-    return true;
-  }
-
-  /**
-   * @private
-   */
-  _goToNextPage() {
-    const page = this.pdfViewer.currentPageNumber;
-    // If we're at the last page, we don't need to do anything.
-    if (page >= this.pdfViewer.pagesCount) {
-      return false;
-    }
-    this.pdfViewer.currentPageNumber = page + 1;
-    return true;
-  }
-
-  /**
-   * @private
-   */
   _notifyStateChange() {
-    this.eventBus.dispatch("presentationmodechanged", {
-      source: this,
-      active: this.active,
-      switchInProgress: !!this.switchInProgress,
-    });
+    let state = PresentationModeState.NORMAL;
+    if (this.switchInProgress) {
+      state = PresentationModeState.CHANGING;
+    } else if (this.active) {
+      state = PresentationModeState.FULLSCREEN;
+    }
+
+    if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) {
+      this.eventBus.dispatch("presentationmodechanged", {
+        source: this,
+        state,
+      });
+    } else {
+      this.eventBus.dispatch("presentationmodechanged", {
+        source: this,
+        state,
+        get active() {
+          throw new Error(
+            "Deprecated parameter: `active`, please use `state` instead."
+          );
+        },
+        get switchInProgress() {
+          throw new Error(
+            "Deprecated parameter: `switchInProgress`, please use `state` instead."
+          );
+        },
+      });
+    }
   }
 
   /**
@@ -295,9 +291,9 @@ class PDFPresentationMode {
         evt.preventDefault();
 
         if (evt.shiftKey) {
-          this._goToPreviousPage();
+          this.pdfViewer.previousPage();
         } else {
-          this._goToNextPage();
+          this.pdfViewer.nextPage();
         }
       }
     }
@@ -402,9 +398,9 @@ class PDFPresentationMode {
           delta = dy;
         }
         if (delta > 0) {
-          this._goToPreviousPage();
+          this.pdfViewer.previousPage();
         } else if (delta < 0) {
-          this._goToNextPage();
+          this.pdfViewer.nextPage();
         }
         break;
     }
@@ -478,7 +474,6 @@ class PDFPresentationMode {
         "webkitfullscreenchange",
         this.fullscreenChangeBind
       );
-      window.addEventListener("MSFullscreenChange", this.fullscreenChangeBind);
     }
   }
 
@@ -494,10 +489,6 @@ class PDFPresentationMode {
     if (typeof PDFJSDev === "undefined" || !PDFJSDev.test("MOZCENTRAL")) {
       window.removeEventListener(
         "webkitfullscreenchange",
-        this.fullscreenChangeBind
-      );
-      window.removeEventListener(
-        "MSFullscreenChange",
         this.fullscreenChangeBind
       );
     }

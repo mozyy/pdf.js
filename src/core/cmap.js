@@ -12,6 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+/* eslint-disable no-var */
 
 import {
   CMapCompressionType,
@@ -335,6 +336,22 @@ class CMap {
     }
     out.charcode = 0;
     out.length = 1;
+  }
+
+  getCharCodeLength(charCode) {
+    const codespaceRanges = this.codespaceRanges;
+    for (let n = 0, nn = codespaceRanges.length; n < nn; n++) {
+      // Check each codespace range to see if it falls within.
+      const codespaceRange = codespaceRanges[n];
+      for (let k = 0, kk = codespaceRange.length; k < kk; ) {
+        const low = codespaceRange[k++];
+        const high = codespaceRange[k++];
+        if (charCode >= low && charCode <= high) {
+          return n + 1;
+        }
+      }
+    }
+    return 1;
   }
 
   get length() {
@@ -993,11 +1010,13 @@ var CMapFactory = (function CMapFactoryClosure() {
       var cMap = new CMap(true);
 
       if (compressionType === CMapCompressionType.BINARY) {
-        return new BinaryCMapReader().process(cMapData, cMap, function (
-          useCMap
-        ) {
-          return extendCMap(cMap, fetchBuiltInCMap, useCMap);
-        });
+        return new BinaryCMapReader().process(
+          cMapData,
+          cMap,
+          function (useCMap) {
+            return extendCMap(cMap, fetchBuiltInCMap, useCMap);
+          }
+        );
       }
       if (compressionType === CMapCompressionType.NONE) {
         var lexer = new Lexer(new Stream(cMapData));
@@ -1036,4 +1055,4 @@ var CMapFactory = (function CMapFactoryClosure() {
   };
 })();
 
-export { CMap, IdentityCMap, CMapFactory };
+export { CMap, CMapFactory, IdentityCMap };

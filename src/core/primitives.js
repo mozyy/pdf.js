@@ -12,7 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-/* uses XRef */
+/* eslint-disable no-var */
 
 import { assert, unreachable } from "../shared/util.js";
 
@@ -171,7 +171,14 @@ var Dict = (function DictClosure() {
     },
   };
 
-  Dict.empty = new Dict(null);
+  Dict.empty = (function () {
+    const emptyDict = new Dict(null);
+
+    emptyDict.set = (key, value) => {
+      unreachable("Should not call `set` on the empty dictionary.");
+    };
+    return emptyDict;
+  })();
 
   Dict.merge = function ({ xref, dictArray, mergeSubDicts = false }) {
     const mergedDict = new Dict(xref);
@@ -270,8 +277,16 @@ var Ref = (function RefClosure() {
 // The reference is identified by number and generation.
 // This structure stores only one instance of the reference.
 class RefSet {
-  constructor() {
-    this._set = new Set();
+  constructor(parent = null) {
+    if (
+      (typeof PDFJSDev === "undefined" ||
+        PDFJSDev.test("!PRODUCTION || TESTING")) &&
+      parent &&
+      !(parent instanceof RefSet)
+    ) {
+      unreachable('RefSet: Invalid "parent" value.');
+    }
+    this._set = new Set(parent && parent._set);
   }
 
   has(ref) {
@@ -284,6 +299,16 @@ class RefSet {
 
   remove(ref) {
     this._set.delete(ref.toString());
+  }
+
+  forEach(callback) {
+    for (const ref of this._set.values()) {
+      callback(ref);
+    }
+  }
+
+  clear() {
+    this._set.clear();
   }
 }
 
@@ -369,19 +394,19 @@ function clearPrimitiveCaches() {
 }
 
 export {
-  EOF,
   clearPrimitiveCaches,
   Cmd,
   Dict,
-  Name,
-  Ref,
-  RefSet,
-  RefSetCache,
-  isEOF,
+  EOF,
   isCmd,
   isDict,
+  isEOF,
   isName,
   isRef,
   isRefsEqual,
   isStream,
+  Name,
+  Ref,
+  RefSet,
+  RefSetCache,
 };

@@ -12,9 +12,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-/* eslint no-var: error */
 
-import { assert, BaseException, warn } from "../shared/util.js";
+import {
+  assert,
+  BaseException,
+  bytesToString,
+  objectSize,
+  stringToPDFString,
+  warn,
+} from "../shared/util.js";
+import { Dict, isName, isRef, isStream, RefSet } from "./primitives.js";
 
 function getLookupTableFactory(initializer) {
   let lookup;
@@ -23,6 +30,22 @@ function getLookupTableFactory(initializer) {
       lookup = Object.create(null);
       initializer(lookup);
       initializer = null;
+    }
+    return lookup;
+  };
+}
+
+function getArrayLookupTableFactory(initializer) {
+  let lookup;
+  return function () {
+    if (initializer) {
+      let arr = initializer();
+      initializer = null;
+      lookup = Object.create(null);
+      for (let i = 0, ii = arr.length; i < ii; i += 2) {
+        lookup[arr[i]] = arr[i + 1];
+      }
+      arr = null;
     }
     return lookup;
   };
@@ -165,16 +188,152 @@ function isWhiteSpace(ch) {
   return ch === 0x20 || ch === 0x09 || ch === 0x0d || ch === 0x0a;
 }
 
+/**
+ * AcroForm field names use an array like notation to refer to
+ * repeated XFA elements e.g. foo.bar[nnn].
+ * see: XFA Spec Chapter 3 - Repeated Elements
+ *
+ * @param {string} path - XFA path name.
+ * @returns {Array} - Array of Objects with the name and pos of
+ * each part of the path.
+ */
+function parseXFAPath(path) {
+  const positionPattern = /(.+)\[([0-9]+)\]$/;
+  return path.split(".").map(component => {
+    const m = component.match(positionPattern);
+    if (m) {
+      return { name: m[1], pos: parseInt(m[2], 10) };
+    }
+    return { name: component, pos: 0 };
+  });
+}
+
+function escapePDFName(str) {
+  const buffer = [];
+  let start = 0;
+  for (let i = 0, ii = str.length; i < ii; i++) {
+    const char = str.charCodeAt(i);
+    // Whitespace or delimiters aren't regular chars, so escape them.
+    if (
+      char < 0x21 ||
+      char > 0x7e ||
+      char === 0x23 /* # */ ||
+      char === 0x28 /* ( */ ||
+      char === 0x29 /* ) */ ||
+      char === 0x3c /* < */ ||
+      char === 0x3e /* > */ ||
+      char === 0x5b /* [ */ ||
+      char === 0x5d /* ] */ ||
+      char === 0x7b /* { */ ||
+      char === 0x7d /* } */ ||
+      char === 0x2f /* / */ ||
+      char === 0x25 /* % */
+    ) {
+      if (start < i) {
+        buffer.push(str.substring(start, i));
+      }
+      buffer.push(`#${char.toString(16)}`);
+      start = i + 1;
+    }
+  }
+
+  if (buffer.length === 0) {
+    return str;
+  }
+
+  if (start < str.length) {
+    buffer.push(str.substring(start, str.length));
+  }
+
+  return buffer.join("");
+}
+
+function _collectJS(entry, xref, list, parents) {
+  if (!entry) {
+    return;
+  }
+
+  let parent = null;
+  if (isRef(entry)) {
+    if (parents.has(entry)) {
+      // If we've already found entry then we've a cycle.
+      return;
+    }
+    parent = entry;
+    parents.put(parent);
+    entry = xref.fetch(entry);
+  }
+  if (Array.isArray(entry)) {
+    for (const element of entry) {
+      _collectJS(element, xref, list, parents);
+    }
+  } else if (entry instanceof Dict) {
+    if (isName(entry.get("S"), "JavaScript") && entry.has("JS")) {
+      const js = entry.get("JS");
+      let code;
+      if (isStream(js)) {
+        code = bytesToString(js.getBytes());
+      } else {
+        code = js;
+      }
+      code = stringToPDFString(code);
+      if (code) {
+        list.push(code);
+      }
+    }
+    _collectJS(entry.getRaw("Next"), xref, list, parents);
+  }
+
+  if (parent) {
+    parents.remove(parent);
+  }
+}
+
+function collectActions(xref, dict, eventType) {
+  const actions = Object.create(null);
+  if (dict.has("AA")) {
+    const additionalActions = dict.get("AA");
+    for (const key of additionalActions.getKeys()) {
+      const action = eventType[key];
+      if (!action) {
+        continue;
+      }
+      const actionDict = additionalActions.getRaw(key);
+      const parents = new RefSet();
+      const list = [];
+      _collectJS(actionDict, xref, list, parents);
+      if (list.length > 0) {
+        actions[action] = list;
+      }
+    }
+  }
+  // Collect the Action if any (we may have one on pushbutton).
+  if (dict.has("A")) {
+    const actionDict = dict.get("A");
+    const parents = new RefSet();
+    const list = [];
+    _collectJS(actionDict, xref, list, parents);
+    if (list.length > 0) {
+      actions.Action = list;
+    }
+  }
+  return objectSize(actions) > 0 ? actions : null;
+}
+
 export {
-  getLookupTableFactory,
-  MissingDataException,
-  XRefEntryException,
-  XRefParseException,
+  collectActions,
+  escapePDFName,
+  getArrayLookupTableFactory,
   getInheritableProperty,
-  toRomanNumerals,
+  getLookupTableFactory,
+  isWhiteSpace,
   log2,
+  MissingDataException,
+  parseXFAPath,
   readInt8,
   readUint16,
   readUint32,
-  isWhiteSpace,
+  toRomanNumerals,
+  XRefEntryException,
+  XRefParseException,
 };

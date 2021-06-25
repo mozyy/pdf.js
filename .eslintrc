@@ -1,6 +1,6 @@
 {
   "parserOptions": {
-    "ecmaVersion": 2020,
+    "ecmaVersion": 2021,
     "sourceType": "module",
   },
 
@@ -8,6 +8,7 @@
     "import",
     "mozilla",
     "no-unsanitized",
+    "sort-exports",
     "unicorn",
   ],
 
@@ -17,7 +18,7 @@
 
   "env": {
     "browser": true,
-    "es2020": true,
+    "es2021": true,
     "worker": true,
     "amd": true,
   },
@@ -36,8 +37,12 @@
     "mozilla/use-includes-instead-of-indexOf": "error",
     "no-unsanitized/method": "error",
     "no-unsanitized/property": "error",
-    "unicorn/no-array-instanceof": "error",
-    "unicorn/prefer-starts-ends-with": "error",
+    "sort-exports/sort-exports": ["error", {
+      "ignoreCase": true,
+    }],
+    "unicorn/no-abusive-eslint-disable": "error",
+    "unicorn/no-instanceof-array": "error",
+    "unicorn/prefer-string-starts-ends-with": "error",
 
     // Possible errors
     "for-direction": "error",
@@ -45,6 +50,7 @@
     "no-async-promise-executor": "error",
     "no-cond-assign": ["error", "except-parens"],
     "no-constant-condition": ["error", { "checkLoops": false, }],
+    "no-debugger": "error",
     "no-dupe-args": "error",
     "no-dupe-else-if": "error",
     "no-dupe-keys": "error",
@@ -65,6 +71,7 @@
     "no-unreachable": "error",
     "no-unsafe-finally": "error",
     "no-unsafe-negation": "error",
+    "no-unsafe-optional-chaining": ["error", { "disallowArithmeticOperators": true }],
     "use-isnan": ["error", { "enforceForIndexOf": true, }],
     "valid-typeof": ["error", { "requireStringLiterals": true, }],
 
@@ -79,6 +86,7 @@
     "dot-notation": "error",
     "eqeqeq": ["error", "always"],
     "grouped-accessor-pairs": ["error", "getBeforeSet"],
+    "no-alert": "error",
     "no-caller": "error",
     "no-else-return": "error",
     "no-empty-pattern": "error",
@@ -108,6 +116,7 @@
     "no-useless-call": "error",
     "no-useless-catch": "error",
     "no-useless-concat": "error",
+    "no-useless-escape": "error",
     "no-useless-return": "error",
     "prefer-promise-reject-errors": "error",
     "wrap-iife": ["error", "any"],
@@ -129,6 +138,11 @@
     "no-unused-vars": ["error", {
       "vars": "local",
       "args": "none",
+    }],
+    "no-use-before-define": ["error", {
+      "functions": false,
+      "classes": false,
+      "variables": false,
     }],
 
     // Node.js and CommonJS

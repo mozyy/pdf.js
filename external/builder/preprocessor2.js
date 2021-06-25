@@ -8,6 +8,7 @@ var path = require("path");
 
 var PDFJS_PREPROCESSOR_NAME = "PDFJSDev";
 var ROOT_PREFIX = "$ROOT/";
+const ACORN_ECMA_VERSION = 2021;
 
 function isLiteral(obj, value) {
   return obj.type === "Literal" && obj.value === value;
@@ -34,7 +35,7 @@ function handlePreprocessorAction(ctx, actionName, args, loc) {
           throw new Error("No code for testing is given");
         }
         var isTrue = !!evalWithDefines(arg.value, ctx.defines);
-        return { type: "Literal", value: isTrue, loc: loc };
+        return { type: "Literal", value: isTrue, loc };
       case "eval":
         arg = args[0];
         if (!arg || arg.type !== "Literal" || typeof arg.value !== "string") {
@@ -46,10 +47,12 @@ function handlePreprocessorAction(ctx, actionName, args, loc) {
           typeof result === "string" ||
           typeof result === "number"
         ) {
-          return { type: "Literal", value: result, loc: loc };
+          return { type: "Literal", value: result, loc };
         }
         if (typeof result === "object") {
-          var parsedObj = acorn.parse("(" + JSON.stringify(result) + ")");
+          const parsedObj = acorn.parse("(" + JSON.stringify(result) + ")", {
+            ecmaVersion: ACORN_ECMA_VERSION,
+          });
           parsedObj.body[0].expression.loc = loc;
           return parsedObj.body[0].expression;
         }
@@ -67,7 +70,9 @@ function handlePreprocessorAction(ctx, actionName, args, loc) {
           );
         }
         var jsonContent = fs.readFileSync(jsonPath).toString();
-        var parsedJSON = acorn.parse("(" + jsonContent + ")");
+        const parsedJSON = acorn.parse("(" + jsonContent + ")", {
+          ecmaVersion: ACORN_ECMA_VERSION,
+        });
         parsedJSON.body[0].expression.loc = loc;
         return parsedJSON.body[0].expression;
     }
@@ -322,14 +327,16 @@ function preprocessPDFJSCode(ctx, code) {
     },
   };
   var parseOptions = {
-    ecmaVersion: 2020,
+    ecmaVersion: ACORN_ECMA_VERSION,
     locations: true,
     sourceFile: ctx.sourceFile,
     sourceType: "module",
   };
   var codegenOptions = {
-    format: format,
-    parse: acorn.parse,
+    format,
+    parse(input) {
+      return acorn.parse(input, { ecmaVersion: ACORN_ECMA_VERSION });
+    },
     sourceMap: ctx.sourceMap,
     sourceMapWithCode: ctx.sourceMap,
   };

@@ -12,6 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+/* eslint-disable no-var */
 
 import {
   assert,
@@ -204,14 +205,14 @@ Shadings.RadialAxial = (function RadialAxialClosure() {
       ratio[0] = t0 + i * step;
       fn(ratio, 0, color, 0);
       rgbColor = cs.getRgb(color, 0);
-      var cssColor = Util.makeCssRgb(rgbColor[0], rgbColor[1], rgbColor[2]);
+      var cssColor = Util.makeHexColor(rgbColor[0], rgbColor[1], rgbColor[2]);
       colorStops.push([i / NUMBER_OF_SAMPLES, cssColor]);
     }
 
     var background = "transparent";
     if (dict.has("Background")) {
       rgbColor = cs.getRgb(dict.get("Background"), 0);
-      background = Util.makeCssRgb(rgbColor[0], rgbColor[1], rgbColor[2]);
+      background = Util.makeHexColor(rgbColor[0], rgbColor[1], rgbColor[2]);
     }
 
     if (!extendStart) {
@@ -966,7 +967,7 @@ Shadings.Dummy = (function DummyClosure() {
   return Dummy;
 })();
 
-function getTilingPatternIR(operatorList, dict, args) {
+function getTilingPatternIR(operatorList, dict, color) {
   const matrix = dict.getArray("Matrix");
   const bbox = Util.normalizeRect(dict.getArray("BBox"));
   const xstep = dict.get("XStep");
@@ -982,7 +983,7 @@ function getTilingPatternIR(operatorList, dict, args) {
 
   return [
     "TilingPattern",
-    args,
+    color,
     operatorList,
     matrix,
     bbox,
@@ -993,4 +994,4 @@ function getTilingPatternIR(operatorList, dict, args) {
   ];
 }
 
-export { Pattern, getTilingPatternIR };
+export { getTilingPatternIR, Pattern };

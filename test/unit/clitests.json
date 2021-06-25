@@ -16,6 +16,7 @@
     "core_utils_spec.js",
     "crypto_spec.js",
     "custom_spec.js",
+    "default_appearance_spec.js",
     "display_svg_spec.js",
     "display_utils_spec.js",
     "document_spec.js",
@@ -37,6 +38,7 @@
     "ui_utils_spec.js",
     "unicode_spec.js",
     "util_spec.js",
-    "writer_spec.js"
+    "writer_spec.js",
+    "xml_spec.js"
   ]
 }
