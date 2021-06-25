@@ -62,12 +62,12 @@ const defaultOptions = {
   },
   enablePrintAutoRotate: {
     /** @type {boolean} */
-    value: false,
+    value: true,
     kind: OptionKind.VIEWER + OptionKind.PREFERENCE,
   },
   enableScripting: {
     /** @type {boolean} */
-    value: typeof PDFJSDev !== "undefined" && PDFJSDev.test("TESTING"),
+    value: true,
     kind: OptionKind.VIEWER + OptionKind.PREFERENCE,
   },
   enableWebGL: {
@@ -203,6 +203,11 @@ const defaultOptions = {
     value: "",
     kind: OptionKind.API,
   },
+  enableXfa: {
+    /** @type {boolean} */
+    value: false,
+    kind: OptionKind.API,
+  },
   fontExtraProperties: {
     /** @type {boolean} */
     value: false,
@@ -245,7 +250,7 @@ const defaultOptions = {
 };
 if (
   typeof PDFJSDev === "undefined" ||
-  PDFJSDev.test("!PRODUCTION || (GENERIC && !LIB)")
+  PDFJSDev.test("!PRODUCTION || GENERIC")
 ) {
   defaultOptions.disablePreferences = {
     /** @type {boolean} */
@@ -266,6 +271,11 @@ if (
     kind: OptionKind.VIEWER,
   };
 } else if (PDFJSDev.test("CHROME")) {
+  defaultOptions.disableTelemetry = {
+    /** @type {boolean} */
+    value: false,
+    kind: OptionKind.VIEWER + OptionKind.PREFERENCE,
+  };
   defaultOptions.sandboxBundleSrc = {
     /** @type {string} */
     value: "../build/pdf.sandbox.js",
@@ -287,7 +297,7 @@ class AppOptions {
     }
     const defaultOption = defaultOptions[name];
     if (defaultOption !== undefined) {
-      return defaultOption.compatibility || defaultOption.value;
+      return defaultOption.compatibility ?? defaultOption.value;
     }
     return undefined;
   }
@@ -319,7 +329,7 @@ class AppOptions {
       options[name] =
         userOption !== undefined
           ? userOption
-          : defaultOption.compatibility || defaultOption.value;
+          : defaultOption.compatibility ?? defaultOption.value;
     }
     return options;
   }

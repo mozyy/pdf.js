@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-import { NullL10n, PresentationModeState, SidebarView } from "./ui_utils.js";
+import { PresentationModeState, SidebarView } from "./ui_utils.js";
 import { RenderingStates } from "./pdf_rendering_queue.js";
 
 const UI_NOTIFICATION_CLASS = "pdfSidebarNotification";
@@ -61,13 +61,7 @@ class PDFSidebar {
   /**
    * @param {PDFSidebarOptions} options
    */
-  constructor({
-    elements,
-    pdfViewer,
-    pdfThumbnailViewer,
-    eventBus,
-    l10n = NullL10n,
-  }) {
+  constructor({ elements, pdfViewer, pdfThumbnailViewer, eventBus, l10n }) {
     this.isOpen = false;
     this.active = SidebarView.THUMBS;
     this.isInitialViewSet = false;
@@ -264,6 +258,7 @@ class PDFSidebar {
     }
     this.isOpen = true;
     this.toggleButton.classList.add("toggled");
+    this.toggleButton.setAttribute("aria-expanded", "true");
 
     this.outerContainer.classList.add("sidebarMoving", "sidebarOpen");
 
@@ -282,6 +277,7 @@ class PDFSidebar {
     }
     this.isOpen = false;
     this.toggleButton.classList.remove("toggled");
+    this.toggleButton.setAttribute("aria-expanded", "false");
 
     this.outerContainer.classList.add("sidebarMoving");
     this.outerContainer.classList.remove("sidebarOpen");
@@ -331,7 +327,7 @@ class PDFSidebar {
     const pagesCount = pdfViewer.pagesCount;
     for (let pageIndex = 0; pageIndex < pagesCount; pageIndex++) {
       const pageView = pdfViewer.getPageView(pageIndex);
-      if (pageView && pageView.renderingState === RenderingStates.FINISHED) {
+      if (pageView?.renderingState === RenderingStates.FINISHED) {
         const thumbnailView = pdfThumbnailViewer.getThumbnail(pageIndex);
         thumbnailView.setImage(pageView);
       }
@@ -343,15 +339,9 @@ class PDFSidebar {
    * @private
    */
   _showUINotification() {
-    this.l10n
-      .get(
-        "toggle_sidebar_notification2.title",
-        null,
-        "Toggle Sidebar (document contains outline/attachments/layers)"
-      )
-      .then(msg => {
-        this.toggleButton.title = msg;
-      });
+    this.l10n.get("toggle_sidebar_notification2.title").then(msg => {
+      this.toggleButton.title = msg;
+    });
 
     if (!this.isOpen) {
       // Only show the notification on the `toggleButton` if the sidebar is
@@ -371,11 +361,9 @@ class PDFSidebar {
     }
 
     if (reset) {
-      this.l10n
-        .get("toggle_sidebar.title", null, "Toggle Sidebar")
-        .then(msg => {
-          this.toggleButton.title = msg;
-        });
+      this.l10n.get("toggle_sidebar.title").then(msg => {
+        this.toggleButton.title = msg;
+      });
     }
   }
 

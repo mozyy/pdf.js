@@ -16,7 +16,7 @@
 // The code for XMLParserBase copied from
 // https://github.com/mozilla/shumway/blob/16451d8836fa85f4b16eeda8b4bda2fa9e2b22b0/src/avm2/natives/xml.ts
 
-import { encodeToXmlString } from "./util.js";
+import { encodeToXmlString } from "./core_utils.js";
 
 const XMLParserErrorCode = {
   NoError: 0,
@@ -63,6 +63,8 @@ class XMLParserBase {
           return "&";
         case "quot":
           return '"';
+        case "apos":
+          return "'";
       }
       return this.onResolveEntity(entity);
     });
@@ -455,14 +457,6 @@ class SimpleXMLParser extends XMLParserBase {
     return { documentElement };
   }
 
-  onResolveEntity(name) {
-    switch (name) {
-      case "apos":
-        return "'";
-    }
-    return super.onResolveEntity(name);
-  }
-
   onText(text) {
     if (isWhitespaceString(text)) {
       return;
@@ -509,4 +503,4 @@ class SimpleXMLParser extends XMLParserBase {
   }
 }
 
-export { SimpleDOMNode, SimpleXMLParser };
+export { SimpleDOMNode, SimpleXMLParser, XMLParserBase, XMLParserErrorCode };

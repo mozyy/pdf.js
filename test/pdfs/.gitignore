@@ -76,6 +76,7 @@
 !issue8798r.pdf
 !issue8823.pdf
 !issue9084.pdf
+!issue12963.pdf
 !issue9105_reduced.pdf
 !issue9252.pdf
 !issue9262_reduced.pdf
@@ -157,6 +158,7 @@
 !issue6019.pdf
 !issue6621.pdf
 !issue6286.pdf
+!issue13107_reduced.pdf
 !issue1055r.pdf
 !issue11713.pdf
 !issue1293r.pdf
@@ -244,6 +246,8 @@
 !personwithdog.pdf
 !helloworld-bad.pdf
 !zerowidthline.pdf
+!js-colors.pdf
+!annotation-line-without-appearance-empty-Rect.pdf
 !issue12841_reduced.pdf
 !bug868745.pdf
 !mmtype1.pdf
@@ -334,6 +338,7 @@
 !issue4573.pdf
 !issue4722.pdf
 !issue4800.pdf
+!issue13147.pdf
 !issue11477_reduced.pdf
 !text_clip_cff_cid.pdf
 !issue4801.pdf
@@ -391,8 +396,10 @@
 !issue12418_reduced.pdf
 !annotation-freetext.pdf
 !annotation-line.pdf
+!annotation-line-without-appearance.pdf
 !bug1669099.pdf
 !annotation-square-circle.pdf
+!annotation-square-circle-without-appearance.pdf
 !annotation-stamp.pdf
 !annotation-fileattachment.pdf
 !annotation-text-widget.pdf
@@ -403,6 +410,7 @@
 !operator-in-TJ-array.pdf
 !issue7878.pdf
 !font_ascent_descent.pdf
+!listbox_actions.pdf
 !issue11442_reduced.pdf
 !issue11549_reduced.pdf
 !issue8097_reduced.pdf

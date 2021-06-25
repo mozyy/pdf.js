@@ -79,7 +79,7 @@ describe("annotation", function () {
 
   let pdfManagerMock, idFactoryMock, partialEvaluator;
 
-  beforeAll(async function (done) {
+  beforeAll(async function () {
     pdfManagerMock = new PDFManagerMock({
       docBaseUrl: null,
     });
@@ -108,8 +108,6 @@ describe("annotation", function () {
       fontCache: new RefSetCache(),
       builtInCMapCache,
     });
-
-    done();
   });
 
   afterAll(function () {
@@ -1672,9 +1670,9 @@ describe("annotation", function () {
         idFactoryMock
       )
         .then(annotation => {
-          const id = annotation.data.id;
-          const annotationStorage = {};
-          annotationStorage[id] = { value: "test\\print" };
+          const annotationStorage = new Map();
+          annotationStorage.set(annotation.data.id, { value: "test\\print" });
+
           return annotation._getAppearance(
             partialEvaluator,
             task,
@@ -1709,9 +1707,11 @@ describe("annotation", function () {
         idFactoryMock
       )
         .then(annotation => {
-          const id = annotation.data.id;
-          const annotationStorage = {};
-          annotationStorage[id] = { value: "こんにちは世界の" };
+          const annotationStorage = new Map();
+          annotationStorage.set(annotation.data.id, {
+            value: "こんにちは世界の",
+          });
+
           return annotation._getAppearance(
             partialEvaluator,
             task,
@@ -1756,7 +1756,8 @@ describe("annotation", function () {
         idFactoryMock
       )
         .then(annotation => {
-          const annotationStorage = {};
+          const annotationStorage = new Map();
+
           return annotation.getOperatorList(
             partialEvaluator,
             task,
@@ -1797,9 +1798,9 @@ describe("annotation", function () {
         idFactoryMock
       )
         .then(annotation => {
-          const id = annotation.data.id;
-          const annotationStorage = {};
-          annotationStorage[id] = { value: "test (print)" };
+          const annotationStorage = new Map();
+          annotationStorage.set(annotation.data.id, { value: "test (print)" });
+
           return annotation._getAppearance(
             partialEvaluator,
             task,
@@ -1808,7 +1809,7 @@ describe("annotation", function () {
         }, done.fail)
         .then(appearance => {
           expect(appearance).toEqual(
-            "/Tx BMC q BT /Helv 11 Tf 0 g 1 0 0 1 0 0 Tm" +
+            "/Tx BMC q BT /Helv 8 Tf 0 g 1 0 0 1 0 0 Tm" +
               " 2.00 2.00 Td (test \\(print\\)) Tj ET Q EMC"
           );
           done();
@@ -1834,9 +1835,11 @@ describe("annotation", function () {
         idFactoryMock
       )
         .then(annotation => {
-          const id = annotation.data.id;
-          const annotationStorage = {};
-          annotationStorage[id] = { value: "こんにちは世界の" };
+          const annotationStorage = new Map();
+          annotationStorage.set(annotation.data.id, {
+            value: "こんにちは世界の",
+          });
+
           return annotation._getAppearance(
             partialEvaluator,
             task,
@@ -1848,7 +1851,7 @@ describe("annotation", function () {
             "\x30\x53\x30\x93\x30\x6b\x30\x61" +
             "\x30\x6f\x4e\x16\x75\x4c\x30\x6e";
           expect(appearance).toEqual(
-            "/Tx BMC q BT /Goth 9 Tf 0 g 1 0 0 1 0 0 Tm" +
+            "/Tx BMC q BT /Goth 8 Tf 0 g 1 0 0 1 0 0 Tm" +
               ` 2.00 2.00 Td (${utf16String}) Tj ET Q EMC`
           );
           done();
@@ -1873,9 +1876,9 @@ describe("annotation", function () {
         idFactoryMock
       )
         .then(annotation => {
-          const id = annotation.data.id;
-          const annotationStorage = {};
-          annotationStorage[id] = { value: "mypassword" };
+          const annotationStorage = new Map();
+          annotationStorage.set(annotation.data.id, { value: "mypassword" });
+
           return annotation._getAppearance(
             partialEvaluator,
             task,
@@ -1906,13 +1909,13 @@ describe("annotation", function () {
         idFactoryMock
       )
         .then(annotation => {
-          const id = annotation.data.id;
-          const annotationStorage = {};
-          annotationStorage[id] = {
+          const annotationStorage = new Map();
+          annotationStorage.set(annotation.data.id, {
             value:
               "a aa aaa aaaa aaaaa aaaaaa " +
               "pneumonoultramicroscopicsilicovolcanoconiosis",
-          };
+          });
+
           return annotation._getAppearance(
             partialEvaluator,
             task,
@@ -1954,9 +1957,11 @@ describe("annotation", function () {
         idFactoryMock
       )
         .then(annotation => {
-          const id = annotation.data.id;
-          const annotationStorage = {};
-          annotationStorage[id] = { value: "こんにちは世界の" };
+          const annotationStorage = new Map();
+          annotationStorage.set(annotation.data.id, {
+            value: "こんにちは世界の",
+          });
+
           return annotation._getAppearance(
             partialEvaluator,
             task,
@@ -2014,9 +2019,8 @@ describe("annotation", function () {
         idFactoryMock
       )
         .then(annotation => {
-          const id = annotation.data.id;
-          const annotationStorage = {};
-          annotationStorage[id] = {
+          const annotationStorage = new Map();
+          annotationStorage.set(annotation.data.id, {
             value:
               "Lorem ipsum dolor sit amet, consectetur adipiscing elit.\r" +
               "Aliquam vitae felis ac lectus bibendum ultricies quis non diam.\n" +
@@ -2026,7 +2030,8 @@ describe("annotation", function () {
               "Nulla consectetur, ligula in tincidunt placerat, " +
               "velit augue consectetur orci, sed mattis libero nunc ut massa.\r" +
               "Etiam facilisis tempus interdum.",
-          };
+          });
+
           return annotation._getAppearance(
             partialEvaluator,
             task,
@@ -2058,9 +2063,9 @@ describe("annotation", function () {
         idFactoryMock
       )
         .then(annotation => {
-          const id = annotation.data.id;
-          const annotationStorage = {};
-          annotationStorage[id] = { value: "aa(aa)a\\" };
+          const annotationStorage = new Map();
+          annotationStorage.set(annotation.data.id, { value: "aa(aa)a\\" });
+
           return annotation._getAppearance(
             partialEvaluator,
             task,
@@ -2101,9 +2106,11 @@ describe("annotation", function () {
         idFactoryMock
       )
         .then(annotation => {
-          const id = annotation.data.id;
-          const annotationStorage = {};
-          annotationStorage[id] = { value: "こんにちは世界の" };
+          const annotationStorage = new Map();
+          annotationStorage.set(annotation.data.id, {
+            value: "こんにちは世界の",
+          });
+
           return annotation._getAppearance(
             partialEvaluator,
             task,
@@ -2138,8 +2145,9 @@ describe("annotation", function () {
         idFactoryMock
       )
         .then(annotation => {
-          const annotationStorage = {};
-          annotationStorage[annotation.data.id] = { value: "hello world" };
+          const annotationStorage = new Map();
+          annotationStorage.set(annotation.data.id, { value: "hello world" });
+
           return annotation.save(partialEvaluator, task, annotationStorage);
         }, done.fail)
         .then(data => {
@@ -2270,8 +2278,11 @@ describe("annotation", function () {
         idFactoryMock
       )
         .then(annotation => {
-          const annotationStorage = {};
-          annotationStorage[annotation.data.id] = { value: "こんにちは世界の" };
+          const annotationStorage = new Map();
+          annotationStorage.set(annotation.data.id, {
+            value: "こんにちは世界の",
+          });
+
           return annotation.save(partialEvaluator, task, annotationStorage);
         }, done.fail)
         .then(data => {
@@ -2440,8 +2451,9 @@ describe("annotation", function () {
         idFactoryMock
       )
         .then(annotation => {
-          const annotationStorage = {};
-          annotationStorage[annotation.data.id] = { value: true };
+          const annotationStorage = new Map();
+          annotationStorage.set(annotation.data.id, { value: true });
+
           return annotation.getOperatorList(
             partialEvaluator,
             task,
@@ -2498,8 +2510,9 @@ describe("annotation", function () {
         idFactoryMock
       )
         .then(annotation => {
-          const annotationStorage = {};
-          annotationStorage[annotation.data.id] = { value: true };
+          const annotationStorage = new Map();
+          annotationStorage.set(annotation.data.id, { value: true });
+
           return Promise.all([
             annotation,
             annotation.getOperatorList(
@@ -2523,8 +2536,9 @@ describe("annotation", function () {
           return annotation;
         }, done.fail)
         .then(annotation => {
-          const annotationStorage = {};
-          annotationStorage[annotation.data.id] = { value: false };
+          const annotationStorage = new Map();
+          annotationStorage.set(annotation.data.id, { value: false });
+
           return annotation.getOperatorList(
             partialEvaluator,
             task,
@@ -2581,8 +2595,9 @@ describe("annotation", function () {
         idFactoryMock
       )
         .then(annotation => {
-          const annotationStorage = {};
-          annotationStorage[annotation.data.id] = { value: true };
+          const annotationStorage = new Map();
+          annotationStorage.set(annotation.data.id, { value: true });
+
           return Promise.all([
             annotation,
             annotation.getOperatorList(
@@ -2606,8 +2621,9 @@ describe("annotation", function () {
           return annotation;
         })
         .then(annotation => {
-          const annotationStorage = {};
-          annotationStorage[annotation.data.id] = { value: true };
+          const annotationStorage = new Map();
+          annotationStorage.set(annotation.data.id, { value: true });
+
           return annotation.getOperatorList(
             partialEvaluator,
             task,
@@ -2665,7 +2681,8 @@ describe("annotation", function () {
         idFactoryMock
       )
         .then(annotation => {
-          const annotationStorage = {};
+          const annotationStorage = new Map();
+
           return annotation.getOperatorList(
             partialEvaluator,
             task,
@@ -2713,8 +2730,9 @@ describe("annotation", function () {
         idFactoryMock
       )
         .then(annotation => {
-          const annotationStorage = {};
-          annotationStorage[annotation.data.id] = { value: true };
+          const annotationStorage = new Map();
+          annotationStorage.set(annotation.data.id, { value: true });
+
           return Promise.all([
             annotation,
             annotation.save(partialEvaluator, task, annotationStorage),
@@ -2732,8 +2750,9 @@ describe("annotation", function () {
           return annotation;
         }, done.fail)
         .then(annotation => {
-          const annotationStorage = {};
-          annotationStorage[annotation.data.id] = { value: false };
+          const annotationStorage = new Map();
+          annotationStorage.set(annotation.data.id, { value: false });
+
           return annotation.save(partialEvaluator, task, annotationStorage);
         }, done.fail)
         .then(data => {
@@ -2875,8 +2894,9 @@ describe("annotation", function () {
         idFactoryMock
       )
         .then(annotation => {
-          const annotationStorage = {};
-          annotationStorage[annotation.data.id] = { value: true };
+          const annotationStorage = new Map();
+          annotationStorage.set(annotation.data.id, { value: true });
+
           return Promise.all([
             annotation,
             annotation.getOperatorList(
@@ -2900,8 +2920,9 @@ describe("annotation", function () {
           return annotation;
         }, done.fail)
         .then(annotation => {
-          const annotationStorage = {};
-          annotationStorage[annotation.data.id] = { value: false };
+          const annotationStorage = new Map();
+          annotationStorage.set(annotation.data.id, { value: false });
+
           return annotation.getOperatorList(
             partialEvaluator,
             task,
@@ -2959,7 +2980,8 @@ describe("annotation", function () {
         idFactoryMock
       )
         .then(annotation => {
-          const annotationStorage = {};
+          const annotationStorage = new Map();
+
           return annotation.getOperatorList(
             partialEvaluator,
             task,
@@ -3018,8 +3040,9 @@ describe("annotation", function () {
         idFactoryMock
       )
         .then(annotation => {
-          const annotationStorage = {};
-          annotationStorage[annotation.data.id] = { value: true };
+          const annotationStorage = new Map();
+          annotationStorage.set(annotation.data.id, { value: true });
+
           return Promise.all([
             annotation,
             annotation.save(partialEvaluator, task, annotationStorage),
@@ -3044,8 +3067,9 @@ describe("annotation", function () {
           return annotation;
         }, done.fail)
         .then(annotation => {
-          const annotationStorage = {};
-          annotationStorage[annotation.data.id] = { value: false };
+          const annotationStorage = new Map();
+          annotationStorage.set(annotation.data.id, { value: false });
+
           return annotation.save(partialEvaluator, task, annotationStorage);
         }, done.fail)
         .then(data => {
@@ -3089,8 +3113,9 @@ describe("annotation", function () {
         idFactoryMock
       )
         .then(annotation => {
-          const annotationStorage = {};
-          annotationStorage[annotation.data.id] = { value: true };
+          const annotationStorage = new Map();
+          annotationStorage.set(annotation.data.id, { value: true });
+
           return Promise.all([
             annotation,
             annotation.save(partialEvaluator, task, annotationStorage),
@@ -3130,7 +3155,9 @@ describe("annotation", function () {
         idFactoryMock
       )
         .then(annotation => {
-          return annotation.save(partialEvaluator, task, {});
+          const annotationStorage = new Map();
+
+          return annotation.save(partialEvaluator, task, annotationStorage);
         })
         .then(data => {
           expect(data).toEqual(null);
@@ -3535,9 +3562,9 @@ describe("annotation", function () {
         idFactoryMock
       )
         .then(annotation => {
-          const id = annotation.data.id;
-          const annotationStorage = {};
-          annotationStorage[id] = { value: "a value" };
+          const annotationStorage = new Map();
+          annotationStorage.set(annotation.data.id, { value: "a value" });
+
           return annotation._getAppearance(
             partialEvaluator,
             task,
@@ -3571,8 +3598,9 @@ describe("annotation", function () {
         idFactoryMock
       )
         .then(annotation => {
-          const annotationStorage = {};
-          annotationStorage[annotation.data.id] = { value: "C" };
+          const annotationStorage = new Map();
+          annotationStorage.set(annotation.data.id, { value: "C" });
+
           return annotation.save(partialEvaluator, task, annotationStorage);
         }, done.fail)
         .then(data => {

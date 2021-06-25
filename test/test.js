@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+/* eslint-disable no-var */
 
 "use strict";
 
@@ -999,7 +1000,10 @@ function main() {
   } else if (options.fontTest) {
     startUnitTest("/test/font/font_test.html", "font");
   } else if (options.integration) {
-    startIntegrationTest();
+    // Allows linked PDF files in integration-tests as well.
+    ensurePDFsDownloaded(function () {
+      startIntegrationTest();
+    });
   } else {
     startRefTest(options.masterMode, options.reftest);
   }

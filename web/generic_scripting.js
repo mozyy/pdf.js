@@ -13,7 +13,36 @@
  * limitations under the License.
  */
 
-import { loadScript } from "pdfjs-lib";
+import { getPdfFilenameFromUrl, loadScript } from "pdfjs-lib";
+
+async function docPropertiesLookup(pdfDocument) {
+  const url = "",
+    baseUrl = url.split("#")[0];
+  /* eslint-disable prefer-const */
+  let {
+    info,
+    metadata,
+    contentDispositionFilename,
+    contentLength,
+  } = await pdfDocument.getMetadata();
+  /* eslint-enable prefer-const */
+
+  if (!contentLength) {
+    const { length } = await pdfDocument.getDownloadInfo();
+    contentLength = length;
+  }
+
+  return {
+    ...info,
+    baseURL: baseUrl,
+    filesize: contentLength,
+    filename: contentDispositionFilename || getPdfFilenameFromUrl(url),
+    metadata: metadata?.getRaw(),
+    authors: metadata?.get("dc:creator"),
+    numPages: pdfDocument.numPages,
+    URL: url,
+  };
+}
 
 class GenericScripting {
   constructor(sandboxBundleSrc) {
@@ -41,4 +70,4 @@ class GenericScripting {
   }
 }
 
-export { GenericScripting };
+export { docPropertiesLookup, GenericScripting };

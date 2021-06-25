@@ -59,6 +59,7 @@ import { Lexer, Parser } from "./parser.js";
 import { CipherTransformFactory } from "./crypto.js";
 import { ColorSpace } from "./colorspace.js";
 import { GlobalImageCache } from "./image_utils.js";
+import { MetadataParser } from "./metadata_parser.js";
 
 function fetchDestination(dest) {
   return isDict(dest) ? dest.get("D") : dest;
@@ -131,20 +132,22 @@ class Catalog {
       this.xref.encrypt && this.xref.encrypt.encryptMetadata
     );
     const stream = this.xref.fetch(streamRef, suppressEncryption);
-    let metadata;
+    let metadata = null;
 
-    if (stream && isDict(stream.dict)) {
+    if (isStream(stream) && isDict(stream.dict)) {
       const type = stream.dict.get("Type");
       const subtype = stream.dict.get("Subtype");
 
       if (isName(type, "Metadata") && isName(subtype, "XML")) {
         // XXX: This should examine the charset the XML document defines,
-        // however since there are currently no real means to decode
-        // arbitrary charsets, let's just hope that the author of the PDF
-        // was reasonable enough to stick with the XML default charset,
-        // which is UTF-8.
+        // however since there are currently no real means to decode arbitrary
+        // charsets, let's just hope that the author of the PDF was reasonable
+        // enough to stick with the XML default charset, which is UTF-8.
         try {
-          metadata = stringToUTF8String(bytesToString(stream.getBytes()));
+          const data = stringToUTF8String(bytesToString(stream.getBytes()));
+          if (data) {
+            metadata = new MetadataParser(data).serializable;
+          }
         } catch (e) {
           if (e instanceof MissingDataException) {
             throw e;
@@ -1363,7 +1366,16 @@ class Catalog {
           }
         /* falls through */
         default:
-          warn(`parseDestDictionary: unsupported action type "${actionName}".`);
+          if (
+            actionName === "JavaScript" ||
+            actionName === "ResetForm" ||
+            actionName === "SubmitForm"
+          ) {
+            // Don't bother the user with a warning for actions that require
+            // scripting support, since those will be handled separately.
+            break;
+          }
+          warn(`parseDestDictionary - unsupported action: "${actionName}".`);
           break;
       }
     } else if (destDict.has("Dest")) {
@@ -1910,9 +1922,6 @@ var XRef = (function XRefClosure() {
           }
           // The top-level /Pages dictionary isn't obviously corrupt.
         } catch (ex) {
-          if (ex instanceof MissingDataException) {
-            throw ex;
-          }
           continue;
         }
         // taking the first one with 'ID'
@@ -2142,12 +2151,13 @@ var XRef = (function XRefClosure() {
           "invalid first and n parameters for ObjStm stream"
         );
       }
-      const parser = new Parser({
+      let parser = new Parser({
         lexer: new Lexer(stream),
         xref: this,
         allowStreams: true,
       });
       const nums = new Array(n);
+      const offsets = new Array(n);
       // read the object numbers to populate cache
       for (let i = 0; i < n; ++i) {
         const num = parser.getObj();
@@ -2163,17 +2173,27 @@ var XRef = (function XRefClosure() {
           );
         }
         nums[i] = num;
+        offsets[i] = offset;
       }
+
+      const start = (stream.start || 0) + first;
       const entries = new Array(n);
       // read stream objects for cache
       for (let i = 0; i < n; ++i) {
+        const length = i < n - 1 ? offsets[i + 1] - offsets[i] : undefined;
+        if (length < 0) {
+          throw new FormatError("Invalid offset in the ObjStm stream.");
+        }
+        parser = new Parser({
+          lexer: new Lexer(
+            stream.makeSubStream(start + offsets[i], length, stream.dict)
+          ),
+          xref: this,
+          allowStreams: true,
+        });
+
         const obj = parser.getObj();
         entries[i] = obj;
-        // The ObjStm should not contain 'endobj'. If it's present, skip over it
-        // to support corrupt PDFs (fixes issue 5241, bug 898610, bug 1037816).
-        if (parser.buf1 instanceof Cmd && parser.buf1.cmd === "endobj") {
-          parser.shift();
-        }
         if (isStream(obj)) {
           continue;
         }
@@ -2556,7 +2576,11 @@ const ObjectLoader = (function () {
             currentNode = this.xref.fetch(currentNode);
           } catch (ex) {
             if (!(ex instanceof MissingDataException)) {
-              throw ex;
+              warn(`ObjectLoader._walk - requesting all data: "${ex}".`);
+              this.refSet = null;
+
+              const { manager } = this.xref.stream;
+              return manager.requestAllChunks();
             }
             nodesToRevisit.push(currentNode);
             pendingRequests.push({ begin: ex.begin, end: ex.end });
