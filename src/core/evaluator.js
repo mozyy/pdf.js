@@ -25,7 +25,6 @@ import {
   isArrayEqual,
   isNum,
   isString,
-  NativeImageDecoding,
   OPS,
   stringToPDFString,
   TextRenderingMode,
@@ -80,18 +79,15 @@ import { DecodeStream } from "./stream.js";
 import { getGlyphsUnicode } from "./glyphlist.js";
 import { getMetrics } from "./metrics.js";
 import { isPDFFunction } from "./function.js";
-import { JpegStream } from "./jpeg_stream.js";
+import { LocalImageCache } from "./image_utils.js";
 import { MurmurHash3_64 } from "./murmurhash3.js";
-import { NativeImageDecoder } from "./image_utils.js";
 import { OperatorList } from "./operator_list.js";
 import { PDFImage } from "./image.js";
 
 var PartialEvaluator = (function PartialEvaluatorClosure() {
   const DefaultPartialEvaluatorOptions = {
-    forceDataSchema: false,
     maxImageSize: -1,
     disableFontFace: false,
-    nativeImageDecoderSupport: NativeImageDecoding.DECODE,
     ignoreErrors: false,
     isEvalSupported: true,
     fontExtraProperties: false,
@@ -105,6 +101,7 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
     idFactory,
     fontCache,
     builtInCMapCache,
+    globalImageCache,
     options = null,
     pdfFunctionFactory,
   }) {
@@ -114,6 +111,7 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
     this.idFactory = idFactory;
     this.fontCache = fontCache;
     this.builtInCMapCache = builtInCMapCache;
+    this.globalImageCache = globalImageCache;
     this.options = options || DefaultPartialEvaluatorOptions;
     this.pdfFunctionFactory = pdfFunctionFactory;
     this.parsingType3Font = false;
@@ -447,10 +445,10 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
       isInline = false,
       operatorList,
       cacheKey,
-      imageCache,
-      forceDisableNativeImageDecoder = false,
+      localImageCache,
     }) {
       var dict = image.dict;
+      const imageRef = dict.objId;
       var w = dict.get("Width", "W");
       var h = dict.get("Height", "H");
 
@@ -494,10 +492,10 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
 
         operatorList.addOp(OPS.paintImageMaskXObject, args);
         if (cacheKey) {
-          imageCache[cacheKey] = {
+          localImageCache.set(cacheKey, imageRef, {
             fn: OPS.paintImageMaskXObject,
             args,
-          };
+          });
         }
         return undefined;
       }
@@ -507,13 +505,7 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
 
       var SMALL_IMAGE_DIMENSIONS = 200;
       // Inlining small images into the queue as RGB data
-      if (
-        isInline &&
-        !softMask &&
-        !mask &&
-        !(image instanceof JpegStream) &&
-        w + h < SMALL_IMAGE_DIMENSIONS
-      ) {
+      if (isInline && !softMask && !mask && w + h < SMALL_IMAGE_DIMENSIONS) {
         const imageObj = new PDFImage({
           xref: this.xref,
           res: resources,
@@ -528,93 +520,22 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
         return undefined;
       }
 
-      const nativeImageDecoderSupport = forceDisableNativeImageDecoder
-        ? NativeImageDecoding.NONE
-        : this.options.nativeImageDecoderSupport;
       // If there is no imageMask, create the PDFImage and a lot
       // of image processing can be done here.
-      let objId = `img_${this.idFactory.createObjId()}`;
+      let objId = `img_${this.idFactory.createObjId()}`,
+        cacheGlobally = false;
 
       if (this.parsingType3Font) {
-        assert(
-          nativeImageDecoderSupport === NativeImageDecoding.NONE,
-          "Type3 image resources should be completely decoded in the worker."
+        objId = `${this.idFactory.getDocId()}_type3res_${objId}`;
+      } else if (imageRef) {
+        cacheGlobally = this.globalImageCache.shouldCache(
+          imageRef,
+          this.pageIndex
         );
 
-        objId = `${this.idFactory.getDocId()}_type3res_${objId}`;
-      }
-
-      if (
-        nativeImageDecoderSupport !== NativeImageDecoding.NONE &&
-        !softMask &&
-        !mask &&
-        image instanceof JpegStream &&
-        image.maybeValidDimensions &&
-        NativeImageDecoder.isSupported(
-          image,
-          this.xref,
-          resources,
-          this.pdfFunctionFactory
-        )
-      ) {
-        // These JPEGs don't need any more processing so we can just send it.
-        return this.handler
-          .sendWithPromise("obj", [
-            objId,
-            this.pageIndex,
-            "JpegStream",
-            image.getIR(this.options.forceDataSchema),
-          ])
-          .then(
-            function () {
-              // Only add the dependency once we know that the native JPEG
-              // decoding succeeded, to ensure that rendering will always
-              // complete.
-              operatorList.addDependency(objId);
-              args = [objId, w, h];
-
-              operatorList.addOp(OPS.paintJpegXObject, args);
-              if (cacheKey) {
-                imageCache[cacheKey] = {
-                  fn: OPS.paintJpegXObject,
-                  args,
-                };
-              }
-            },
-            reason => {
-              warn(
-                "Native JPEG decoding failed -- trying to recover: " +
-                  (reason && reason.message)
-              );
-              // Try to decode the JPEG image with the built-in decoder instead.
-              return this.buildPaintImageXObject({
-                resources,
-                image,
-                isInline,
-                operatorList,
-                cacheKey,
-                imageCache,
-                forceDisableNativeImageDecoder: true,
-              });
-            }
-          );
-      }
-
-      // Creates native image decoder only if a JPEG image or mask is present.
-      var nativeImageDecoder = null;
-      if (
-        nativeImageDecoderSupport === NativeImageDecoding.DECODE &&
-        (image instanceof JpegStream ||
-          mask instanceof JpegStream ||
-          softMask instanceof JpegStream)
-      ) {
-        nativeImageDecoder = new NativeImageDecoder({
-          xref: this.xref,
-          resources,
-          handler: this.handler,
-          forceDataSchema: this.options.forceDataSchema,
-          pdfFunctionFactory: this.pdfFunctionFactory,
-        });
+        if (cacheGlobally) {
+          objId = `${this.idFactory.getDocId()}_${objId}`;
+        }
       }
 
       // Ensure that the dependency is added before the image is decoded.
@@ -622,12 +543,10 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
       args = [objId, w, h];
 
       const imgPromise = PDFImage.buildImage({
-        handler: this.handler,
         xref: this.xref,
         res: resources,
         image,
         isInline,
-        nativeDecoder: nativeImageDecoder,
         pdfFunctionFactory: this.pdfFunctionFactory,
       })
         .then(imageObj => {
@@ -639,6 +558,13 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
               [objId, "FontType3Res", imgData],
               [imgData.data.buffer]
             );
+          } else if (cacheGlobally) {
+            this.handler.send(
+              "commonobj",
+              [objId, "Image", imgData],
+              [imgData.data.buffer]
+            );
+            return undefined;
           }
           this.handler.send(
             "obj",
@@ -656,6 +582,9 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
               "FontType3Res",
               null,
             ]);
+          } else if (cacheGlobally) {
+            this.handler.send("commonobj", [objId, "Image", null]);
+            return undefined;
           }
           this.handler.send("obj", [objId, this.pageIndex, "Image", null]);
           return undefined;
@@ -670,10 +599,23 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
 
       operatorList.addOp(OPS.paintImageXObject, args);
       if (cacheKey) {
-        imageCache[cacheKey] = {
+        localImageCache.set(cacheKey, imageRef, {
           fn: OPS.paintImageXObject,
           args,
-        };
+        });
+
+        if (imageRef) {
+          assert(!isInline, "Cannot cache an inline image globally.");
+          this.globalImageCache.addPageIndex(imageRef, this.pageIndex);
+
+          if (cacheGlobally) {
+            this.globalImageCache.setData(imageRef, {
+              objId,
+              fn: OPS.paintImageXObject,
+              args,
+            });
+          }
+        }
       }
       return undefined;
     },
@@ -1261,7 +1203,7 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
       var self = this;
       var xref = this.xref;
       let parsingText = false;
-      var imageCache = Object.create(null);
+      const localImageCache = new LocalImageCache();
 
       var xobjs = resources.get("XObject") || Dict.empty;
       var patterns = resources.get("Pattern") || Dict.empty;
@@ -1308,10 +1250,13 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
             case OPS.paintXObject:
               // eagerly compile XForm objects
               var name = args[0].name;
-              if (name && imageCache[name] !== undefined) {
-                operatorList.addOp(imageCache[name].fn, imageCache[name].args);
-                args = null;
-                continue;
+              if (name) {
+                const localImage = localImageCache.getByName(name);
+                if (localImage) {
+                  operatorList.addOp(localImage.fn, localImage.args);
+                  args = null;
+                  continue;
+                }
               }
 
               next(
@@ -1322,7 +1267,31 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
                     );
                   }
 
-                  const xobj = xobjs.get(name);
+                  let xobj = xobjs.getRaw(name);
+                  if (xobj instanceof Ref) {
+                    const localImage = localImageCache.getByRef(xobj);
+                    if (localImage) {
+                      operatorList.addOp(localImage.fn, localImage.args);
+
+                      resolveXObject();
+                      return;
+                    }
+
+                    const globalImage = self.globalImageCache.getData(
+                      xobj,
+                      self.pageIndex
+                    );
+                    if (globalImage) {
+                      operatorList.addDependency(globalImage.objId);
+                      operatorList.addOp(globalImage.fn, globalImage.args);
+
+                      resolveXObject();
+                      return;
+                    }
+
+                    xobj = xref.fetch(xobj);
+                  }
+
                   if (!xobj) {
                     operatorList.addOp(fn, args);
                     resolveXObject();
@@ -1360,7 +1329,7 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
                         image: xobj,
                         operatorList,
                         cacheKey: name,
-                        imageCache,
+                        localImageCache,
                       })
                       .then(resolveXObject, rejectXObject);
                     return;
@@ -1419,9 +1388,9 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
             case OPS.endInlineImage:
               var cacheKey = args[0].cacheKey;
               if (cacheKey) {
-                var cacheEntry = imageCache[cacheKey];
-                if (cacheEntry !== undefined) {
-                  operatorList.addOp(cacheEntry.fn, cacheEntry.args);
+                const localImage = localImageCache.getByName(cacheKey);
+                if (localImage) {
+                  operatorList.addOp(localImage.fn, localImage.args);
                   args = null;
                   continue;
                 }
@@ -1433,7 +1402,7 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
                   isInline: true,
                   operatorList,
                   cacheKey,
-                  imageCache,
+                  localImageCache,
                 })
               );
               return;
@@ -1756,7 +1725,7 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
 
       // The xobj is parsed iff it's needed, e.g. if there is a `DO` cmd.
       var xobjs = null;
-      var skipEmptyXObjs = Object.create(null);
+      const emptyXObjectCache = new LocalImageCache();
 
       var preprocessor = new EvaluatorPreprocessor(stream, xref, stateManager);
 
@@ -2232,7 +2201,7 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
               }
 
               var name = args[0].name;
-              if (name && skipEmptyXObjs[name] !== undefined) {
+              if (name && emptyXObjectCache.getByName(name)) {
                 break;
               }
 
@@ -2244,7 +2213,16 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
                     );
                   }
 
-                  const xobj = xobjs.get(name);
+                  let xobj = xobjs.getRaw(name);
+                  if (xobj instanceof Ref) {
+                    if (emptyXObjectCache.getByRef(xobj)) {
+                      resolveXObject();
+                      return;
+                    }
+
+                    xobj = xref.fetch(xobj);
+                  }
+
                   if (!xobj) {
                     resolveXObject();
                     return;
@@ -2259,7 +2237,8 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
                   }
 
                   if (type.name !== "Form") {
-                    skipEmptyXObjs[name] = true;
+                    emptyXObjectCache.set(name, xobj.dict.objId, true);
+
                     resolveXObject();
                     return;
                   }
@@ -2310,7 +2289,7 @@ var PartialEvaluator = (function PartialEvaluatorClosure() {
                     })
                     .then(function () {
                       if (!sinkWrapper.enqueueInvoked) {
-                        skipEmptyXObjs[name] = true;
+                        emptyXObjectCache.set(name, xobj.dict.objId, true);
                       }
                       resolveXObject();
                     }, rejectXObject);
@@ -3334,7 +3313,6 @@ class TranslatedFont {
     // the rendering code on the main-thread (see issue10717.pdf).
     var type3Options = Object.create(evaluator.options);
     type3Options.ignoreErrors = false;
-    type3Options.nativeImageDecoderSupport = NativeImageDecoding.NONE;
     var type3Evaluator = evaluator.clone(type3Options);
     type3Evaluator.parsingType3Font = true;
 

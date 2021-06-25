@@ -399,10 +399,8 @@ var WorkerMessageHandler = {
       ensureNotTerminated();
 
       var evaluatorOptions = {
-        forceDataSchema: data.disableCreateObjectURL,
         maxImageSize: data.maxImageSize,
         disableFontFace: data.disableFontFace,
-        nativeImageDecoderSupport: data.nativeImageDecoderSupport,
         ignoreErrors: data.ignoreErrors,
         isEvalSupported: data.isEvalSupported,
         fontExtraProperties: data.fontExtraProperties,
@@ -625,7 +623,7 @@ var WorkerMessageHandler = {
     });
 
     handler.on("Cleanup", function wphCleanup(data) {
-      return pdfManager.cleanup();
+      return pdfManager.cleanup(/* manuallyTriggered = */ true);
     });
 
     handler.on("Terminate", function wphTerminate(data) {

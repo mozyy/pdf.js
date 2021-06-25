@@ -74,6 +74,7 @@ class Page {
     ref,
     fontCache,
     builtInCMapCache,
+    globalImageCache,
     pdfFunctionFactory,
   }) {
     this.pdfManager = pdfManager;
@@ -83,6 +84,7 @@ class Page {
     this.ref = ref;
     this.fontCache = fontCache;
     this.builtInCMapCache = builtInCMapCache;
+    this.globalImageCache = globalImageCache;
     this.pdfFunctionFactory = pdfFunctionFactory;
     this.evaluatorOptions = pdfManager.evaluatorOptions;
     this.resourcesPromise = null;
@@ -261,6 +263,7 @@ class Page {
       idFactory: this.idFactory,
       fontCache: this.fontCache,
       builtInCMapCache: this.builtInCMapCache,
+      globalImageCache: this.globalImageCache,
       options: this.evaluatorOptions,
       pdfFunctionFactory: this.pdfFunctionFactory,
     });
@@ -354,6 +357,7 @@ class Page {
         idFactory: this.idFactory,
         fontCache: this.fontCache,
         builtInCMapCache: this.builtInCMapCache,
+        globalImageCache: this.globalImageCache,
         options: this.evaluatorOptions,
         pdfFunctionFactory: this.pdfFunctionFactory,
       });
@@ -816,6 +820,7 @@ class PDFDocument {
         ref,
         fontCache: catalog.fontCache,
         builtInCMapCache: catalog.builtInCMapCache,
+        globalImageCache: catalog.globalImageCache,
         pdfFunctionFactory: this.pdfFunctionFactory,
       });
     }));
@@ -839,8 +844,10 @@ class PDFDocument {
     return this.catalog.fontFallback(id, handler);
   }
 
-  async cleanup() {
-    return this.catalog ? this.catalog.cleanup() : clearPrimitiveCaches();
+  async cleanup(manuallyTriggered = false) {
+    return this.catalog
+      ? this.catalog.cleanup(manuallyTriggered)
+      : clearPrimitiveCaches();
   }
 }
 
