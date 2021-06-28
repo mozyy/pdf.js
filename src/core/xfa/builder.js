@@ -17,9 +17,11 @@ import { $buildXFAObject, NamespaceIds } from "./namespaces.js";
 import {
   $cleanup,
   $finalize,
+  $ids,
   $nsAttributes,
   $onChild,
   $resolvePrototypes,
+  $root,
   XFAObject,
 } from "./xfa_object.js";
 import { NamespaceSetUp } from "./setup.js";
@@ -27,13 +29,11 @@ import { Template } from "./template.js";
 import { UnknownNamespace } from "./unknown.js";
 import { warn } from "../../shared/util.js";
 
-const _ids = Symbol();
-
 class Root extends XFAObject {
   constructor(ids) {
     super(-1, "root", Object.create(null));
     this.element = null;
-    this[_ids] = ids;
+    this[$ids] = ids;
   }
 
   [$onChild](child) {
@@ -44,7 +44,12 @@ class Root extends XFAObject {
   [$finalize]() {
     super[$finalize]();
     if (this.element.template instanceof Template) {
-      this.element.template[$resolvePrototypes](this[_ids]);
+      // Set the root element in $ids using a symbol in order
+      // to avoid conflict with real IDs.
+      this[$ids].set($root, this.element);
+
+      this.element.template[$resolvePrototypes](this[$ids]);
+      this.element.template[$ids] = this[$ids];
     }
   }
 }

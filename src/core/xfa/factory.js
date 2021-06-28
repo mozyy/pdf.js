@@ -13,8 +13,10 @@
  * limitations under the License.
  */
 
-import { $toHTML } from "./xfa_object.js";
+import { $globalData, $toHTML } from "./xfa_object.js";
 import { Binder } from "./bind.js";
+import { FontFinder } from "./fonts.js";
+import { warn } from "../../shared/util.js";
 import { XFAParser } from "./parser.js";
 
 class XFAFactory {
@@ -22,18 +24,50 @@ class XFAFactory {
     try {
       this.root = new XFAParser().parse(XFAFactory._createDocument(data));
       this.form = new Binder(this.root).bind();
-      this.pages = this.form[$toHTML]();
+      this.form[$globalData].template = this.form;
     } catch (e) {
-      console.log(e);
+      warn(`XFA - an error occured during parsing and binding: ${e}`);
     }
   }
 
-  getPage(pageIndex) {
-    return this.pages.children[pageIndex];
+  isValid() {
+    return this.root && this.form;
+  }
+
+  _createPages() {
+    try {
+      this.pages = this.form[$toHTML]();
+      this.dims = this.pages.children.map(c => {
+        const { width, height } = c.attributes.style;
+        return [0, 0, parseInt(width), parseInt(height)];
+      });
+    } catch (e) {
+      warn(`XFA - an error occured during layout: ${e}`);
+    }
+  }
+
+  getBoundingBox(pageIndex) {
+    return this.dims[pageIndex];
   }
 
   get numberPages() {
-    return this.pages.children.length;
+    if (!this.pages) {
+      this._createPages();
+    }
+    return this.dims.length;
+  }
+
+  setFonts(fonts) {
+    this.form[$globalData].fontFinder = new FontFinder(fonts);
+  }
+
+  getPages() {
+    if (!this.pages) {
+      this._createPages();
+    }
+    const pages = this.pages;
+    this.pages = null;
+    return pages;
   }
 
   static _createDocument(data) {

@@ -14,6 +14,7 @@
  */
 
 import { PDFPrintServiceFactory, PDFViewerApplication } from "./app.js";
+import { getXfaHtmlForPrinting } from "./print_utils.js";
 import { viewerCompatibilityParams } from "./viewer_compatibility.js";
 
 let activeService = null;
@@ -48,7 +49,7 @@ function renderPage(
       transform: [PRINT_UNITS, 0, 0, PRINT_UNITS, 0, 0],
       viewport: pdfPage.getViewport({ scale: 1, rotation: size.rotation }),
       intent: "print",
-      annotationStorage: pdfDocument.annotationStorage,
+      includeAnnotationStorage: true,
       optionalContentConfigPromise,
     };
     return pdfPage.render(renderContext).promise;
@@ -139,6 +140,11 @@ PDFPrintService.prototype = {
   },
 
   renderPages() {
+    if (this.pdfDocument.isPureXfa) {
+      getXfaHtmlForPrinting(this.printContainer, this.pdfDocument);
+      return Promise.resolve();
+    }
+
     const pageCount = this.pagesOverview.length;
     const renderNextPage = (resolve, reject) => {
       this.throwIfInactive();
@@ -181,6 +187,7 @@ PDFPrintService.prototype = {
     }
 
     const wrapper = document.createElement("div");
+    wrapper.className = "printedPage";
     wrapper.appendChild(img);
     this.printContainer.appendChild(wrapper);
 

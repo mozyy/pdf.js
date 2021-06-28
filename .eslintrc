@@ -6,6 +6,7 @@
 
   "plugins": [
     "import",
+    "json",
     "mozilla",
     "no-unsanitized",
     "sort-exports",
@@ -13,6 +14,7 @@
   ],
 
   "extends": [
+    "plugin:json/recommended",
     "plugin:prettier/recommended"
   ],
 
@@ -32,7 +34,9 @@
   "rules": {
     // Plugins
     "import/extensions": ["error", "always", { "ignorePackages": true, }],
-    "import/no-unresolved": "error",
+    "import/no-unresolved": ["error", {
+      "ignore": ["pdfjs", "pdfjs-lib", "pdfjs-web"]
+    }],
     "mozilla/avoid-removeChild": "error",
     "mozilla/use-includes-instead-of-indexOf": "error",
     "no-unsanitized/method": "error",
@@ -41,6 +45,7 @@
       "ignoreCase": true,
     }],
     "unicorn/no-abusive-eslint-disable": "error",
+    "unicorn/no-array-push-push": "error",
     "unicorn/no-instanceof-array": "error",
     "unicorn/prefer-string-starts-ends-with": "error",
 

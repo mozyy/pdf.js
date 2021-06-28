@@ -23,7 +23,6 @@ import {
   assert,
   escapeString,
   getModificationDate,
-  isArrayEqual,
   isAscii,
   isString,
   OPS,
@@ -34,7 +33,6 @@ import {
   Util,
   warn,
 } from "../shared/util.js";
-import { Catalog, FileSpec, ObjectLoader } from "./obj.js";
 import { collectActions, getInheritableProperty } from "./core_utils.js";
 import {
   createDefaultAppearance,
@@ -49,7 +47,10 @@ import {
   Name,
   RefSet,
 } from "./primitives.js";
+import { Catalog } from "./catalog.js";
 import { ColorSpace } from "./colorspace.js";
+import { FileSpec } from "./file_spec.js";
+import { ObjectLoader } from "./object_loader.js";
 import { OperatorList } from "./operator_list.js";
 import { StringStream } from "./stream.js";
 import { writeDict } from "./writer.js";
@@ -69,22 +70,34 @@ class AnnotationFactory {
    *   instance.
    */
   static create(xref, ref, pdfManager, idFactory, collectFields) {
-    return pdfManager.ensureCatalog("acroForm").then(acroForm => {
-      return pdfManager.ensure(this, "_create", [
+    return Promise.all([
+      pdfManager.ensureCatalog("acroForm"),
+      collectFields ? this._getPageIndex(xref, ref, pdfManager) : -1,
+    ]).then(([acroForm, pageIndex]) =>
+      pdfManager.ensure(this, "_create", [
         xref,
         ref,
         pdfManager,
         idFactory,
         acroForm,
         collectFields,
-      ]);
-    });
+        pageIndex,
+      ])
+    );
   }
 
   /**
    * @private
    */
-  static _create(xref, ref, pdfManager, idFactory, acroForm, collectFields) {
+  static _create(
+    xref,
+    ref,
+    pdfManager,
+    idFactory,
+    acroForm,
+    collectFields,
+    pageIndex = -1
+  ) {
     const dict = xref.fetchIfRef(ref);
     if (!isDict(dict)) {
       return undefined;
@@ -106,6 +119,7 @@ class AnnotationFactory {
       pdfManager,
       acroForm: acroForm instanceof Dict ? acroForm : Dict.empty,
       collectFields,
+      pageIndex,
     };
 
     switch (subtype) {
@@ -126,6 +140,8 @@ class AnnotationFactory {
             return new ButtonWidgetAnnotation(parameters);
           case "Ch":
             return new ChoiceWidgetAnnotation(parameters);
+          case "Sig":
+            return new SignatureWidgetAnnotation(parameters);
         }
         warn(
           `Unimplemented widget field type "${fieldType}", ` +
@@ -190,6 +206,26 @@ class AnnotationFactory {
           }
         }
         return new Annotation(parameters);
+    }
+  }
+
+  static async _getPageIndex(xref, ref, pdfManager) {
+    try {
+      const annotDict = await xref.fetchIfRefAsync(ref);
+      if (!isDict(annotDict)) {
+        return -1;
+      }
+      const pageRef = annotDict.getRaw("P");
+      if (!isRef(pageRef)) {
+        return -1;
+      }
+      const pageIndex = await pdfManager.ensureCatalog("getPageIndex", [
+        pageRef,
+      ]);
+      return pageIndex;
+    } catch (ex) {
+      warn(`_getPageIndex: "${ex}".`);
+      return -1;
     }
   }
 }
@@ -369,6 +405,7 @@ class Annotation {
         AnnotationActionEventType
       );
       this.data.fieldName = this._constructFieldName(dict);
+      this.data.pageIndex = params.pageIndex;
     }
 
     this._fallbackFontDict = null;
@@ -401,13 +438,40 @@ class Annotation {
     );
   }
 
-  isHidden(annotationStorage) {
+  /**
+   * Check if the annotation must be displayed by taking into account
+   * the value found in the annotationStorage which may have been set
+   * through JS.
+   *
+   * @public
+   * @memberof Annotation
+   * @param {AnnotationStorage} [annotationStorage] - Storage for annotation
+   */
+  mustBeViewed(annotationStorage) {
     const storageEntry =
       annotationStorage && annotationStorage.get(this.data.id);
     if (storageEntry && storageEntry.hidden !== undefined) {
-      return storageEntry.hidden;
+      return !storageEntry.hidden;
     }
-    return this._hasFlag(this.flags, AnnotationFlag.HIDDEN);
+    return this.viewable && !this._hasFlag(this.flags, AnnotationFlag.HIDDEN);
+  }
+
+  /**
+   * Check if the annotation must be printed by taking into account
+   * the value found in the annotationStorage which may have been set
+   * through JS.
+   *
+   * @public
+   * @memberof Annotation
+   * @param {AnnotationStorage} [annotationStorage] - Storage for annotation
+   */
+  mustBePrinted(annotationStorage) {
+    const storageEntry =
+      annotationStorage && annotationStorage.get(this.data.id);
+    if (storageEntry && storageEntry.print !== undefined) {
+      return storageEntry.print;
+    }
+    return this.printable;
   }
 
   /**
@@ -677,6 +741,7 @@ class Annotation {
         name: this.data.fieldName,
         type: "",
         kidIds: this.data.kidIds,
+        page: this.data.pageIndex,
       };
     }
     return null;
@@ -1004,6 +1069,8 @@ class MarkupAnnotation extends Annotation {
     strokeColor,
     fillColor,
     blendMode,
+    strokeAlpha,
+    fillAlpha,
     pointsCallback,
   }) {
     let minX = Number.MAX_VALUE;
@@ -1057,6 +1124,12 @@ class MarkupAnnotation extends Annotation {
     const gsDict = new Dict(xref);
     if (blendMode) {
       gsDict.set("BM", Name.get(blendMode));
+    }
+    if (typeof strokeAlpha === "number") {
+      gsDict.set("CA", strokeAlpha);
+    }
+    if (typeof fillAlpha === "number") {
+      gsDict.set("ca", fillAlpha);
     }
 
     const stateDict = new Dict(xref);
@@ -1151,15 +1224,6 @@ class WidgetAnnotation extends Annotation {
 
     data.readOnly = this.hasFieldFlag(AnnotationFieldFlag.READONLY);
     data.hidden = this._hasFlag(data.annotationFlags, AnnotationFlag.HIDDEN);
-
-    // Hide signatures because we cannot validate them, and unset the fieldValue
-    // since it's (most likely) a `Dict` which is non-serializable and will thus
-    // cause errors when sending annotations to the main-thread (issue 10347).
-    // if (data.fieldType === "Sig") {
-    //   data.fieldValue = null;
-    //   this.setFlags(AnnotationFlag.HIDDEN);
-    //   data.hidden = true;
-    // }
   }
 
   /**
@@ -1201,7 +1265,7 @@ class WidgetAnnotation extends Annotation {
   getOperatorList(evaluator, task, renderForms, annotationStorage) {
     // Do not render form elements on the canvas when interactive forms are
     // enabled. The display layer is responsible for rendering them instead.
-    if (renderForms) {
+    if (renderForms && !(this instanceof SignatureWidgetAnnotation)) {
       return Promise.resolve(new OperatorList());
     }
 
@@ -1333,9 +1397,7 @@ class WidgetAnnotation extends Annotation {
 
     const bufferNew = [`${newRef.num} ${newRef.gen} obj\n`];
     writeDict(appearanceDict, bufferNew, newTransform);
-    bufferNew.push(" stream\n");
-    bufferNew.push(appearance);
-    bufferNew.push("\nendstream\nendobj\n");
+    bufferNew.push(" stream\n", appearance, "\nendstream\nendobj\n");
 
     return [
       // data for the original object
@@ -1559,11 +1621,8 @@ class WidgetAnnotation extends Annotation {
         "Expected `_defaultAppearanceData` to have been set."
       );
     }
-    const {
-      localResources,
-      appearanceResources,
-      acroFormResources,
-    } = this._fieldResources;
+    const { localResources, appearanceResources, acroFormResources } =
+      this._fieldResources;
 
     const fontName =
       this.data.defaultAppearanceData &&
@@ -1600,13 +1659,6 @@ class WidgetAnnotation extends Annotation {
   }
 
   getFieldObject() {
-    if (this.data.fieldType === "Sig") {
-      return {
-        id: this.data.id,
-        value: null,
-        type: "signature",
-      };
-    }
     return null;
   }
 }
@@ -1787,6 +1839,7 @@ class TextWidgetAnnotation extends WidgetAnnotation {
       name: this.data.fieldName,
       rect: this.data.rect,
       actions: this.data.actions,
+      page: this.data.pageIndex,
       type: "text",
     };
   }
@@ -2118,6 +2171,7 @@ class ButtonWidgetAnnotation extends WidgetAnnotation {
       rect: this.data.rect,
       hidden: this.data.hidden,
       actions: this.data.actions,
+      page: this.data.pageIndex,
       type,
     };
   }
@@ -2198,7 +2252,28 @@ class ChoiceWidgetAnnotation extends WidgetAnnotation {
       hidden: this.data.hidden,
       actions: this.data.actions,
       items: this.data.options,
+      page: this.data.pageIndex,
       type,
+    };
+  }
+}
+
+class SignatureWidgetAnnotation extends WidgetAnnotation {
+  constructor(params) {
+    super(params);
+
+    // Unset the fieldValue since it's (most likely) a `Dict` which is
+    // non-serializable and will thus cause errors when sending annotations
+    // to the main-thread (issue 10347).
+    this.data.fieldValue = null;
+  }
+
+  getFieldObject() {
+    return {
+      id: this.data.id,
+      value: null,
+      page: this.data.pageIndex,
+      type: "signature",
     };
   }
 }
@@ -2332,28 +2407,48 @@ class LineAnnotation extends MarkupAnnotation {
       const strokeColor = this.color
         ? Array.from(this.color).map(c => c / 255)
         : [0, 0, 0];
+      const strokeAlpha = parameters.dict.get("CA");
 
-      const borderWidth = this.borderStyle.width;
+      // The default fill color is transparent. Setting the fill colour is
+      // necessary if/when we want to add support for non-default line endings.
+      let fillColor = null,
+        interiorColor = parameters.dict.getArray("IC");
+      if (interiorColor) {
+        interiorColor = getRgbColor(interiorColor);
+        fillColor = interiorColor
+          ? Array.from(interiorColor).map(c => c / 255)
+          : null;
+      }
+      const fillAlpha = fillColor ? strokeAlpha : null;
 
-      // If the /Rect-entry is empty, create a fallback rectangle such that we
-      // get similar rendering/highlighting behaviour as in Adobe Reader.
-      if (isArrayEqual(this.rectangle, [0, 0, 0, 0])) {
-        this.rectangle = [
-          this.data.lineCoordinates[0] - 2 * borderWidth,
-          this.data.lineCoordinates[1] - 2 * borderWidth,
-          this.data.lineCoordinates[2] + 2 * borderWidth,
-          this.data.lineCoordinates[3] + 2 * borderWidth,
-        ];
+      const borderWidth = this.borderStyle.width || 1,
+        borderAdjust = 2 * borderWidth;
+
+      // If the /Rect-entry is empty/wrong, create a fallback rectangle so that
+      // we get similar rendering/highlighting behaviour as in Adobe Reader.
+      const bbox = [
+        this.data.lineCoordinates[0] - borderAdjust,
+        this.data.lineCoordinates[1] - borderAdjust,
+        this.data.lineCoordinates[2] + borderAdjust,
+        this.data.lineCoordinates[3] + borderAdjust,
+      ];
+      if (!Util.intersect(this.rectangle, bbox)) {
+        this.rectangle = bbox;
       }
 
       this._setDefaultAppearance({
         xref: parameters.xref,
         extra: `${borderWidth} w`,
         strokeColor,
+        fillColor,
+        strokeAlpha,
+        fillAlpha,
         pointsCallback: (buffer, points) => {
-          buffer.push(`${lineCoordinates[0]} ${lineCoordinates[1]} m`);
-          buffer.push(`${lineCoordinates[2]} ${lineCoordinates[3]} l`);
-          buffer.push("S");
+          buffer.push(
+            `${lineCoordinates[0]} ${lineCoordinates[1]} m`,
+            `${lineCoordinates[2]} ${lineCoordinates[3]} l`,
+            "S"
+          );
           return [
             points[0].x - borderWidth,
             points[1].x + borderWidth,
@@ -2377,22 +2472,26 @@ class SquareAnnotation extends MarkupAnnotation {
       const strokeColor = this.color
         ? Array.from(this.color).map(c => c / 255)
         : [0, 0, 0];
+      const strokeAlpha = parameters.dict.get("CA");
 
       // The default fill color is transparent.
-      let fillColor = null;
-      let interiorColor = parameters.dict.getArray("IC");
+      let fillColor = null,
+        interiorColor = parameters.dict.getArray("IC");
       if (interiorColor) {
         interiorColor = getRgbColor(interiorColor);
         fillColor = interiorColor
           ? Array.from(interiorColor).map(c => c / 255)
           : null;
       }
+      const fillAlpha = fillColor ? strokeAlpha : null;
 
       this._setDefaultAppearance({
         xref: parameters.xref,
         extra: `${this.borderStyle.width} w`,
         strokeColor,
         fillColor,
+        strokeAlpha,
+        fillAlpha,
         pointsCallback: (buffer, points) => {
           const x = points[2].x + this.borderStyle.width / 2;
           const y = points[2].y + this.borderStyle.width / 2;
@@ -2422,6 +2521,7 @@ class CircleAnnotation extends MarkupAnnotation {
       const strokeColor = this.color
         ? Array.from(this.color).map(c => c / 255)
         : [0, 0, 0];
+      const strokeAlpha = parameters.dict.get("CA");
 
       // The default fill color is transparent.
       let fillColor = null;
@@ -2432,6 +2532,7 @@ class CircleAnnotation extends MarkupAnnotation {
           ? Array.from(interiorColor).map(c => c / 255)
           : null;
       }
+      const fillAlpha = fillColor ? strokeAlpha : null;
 
       // Circles are approximated by Bézier curves with four segments since
       // there is no circle primitive in the PDF specification. For the control
@@ -2443,6 +2544,8 @@ class CircleAnnotation extends MarkupAnnotation {
         extra: `${this.borderStyle.width} w`,
         strokeColor,
         fillColor,
+        strokeAlpha,
+        fillAlpha,
         pointsCallback: (buffer, points) => {
           const x0 = points[0].x + this.borderStyle.width / 2;
           const y0 = points[0].y - this.borderStyle.width / 2;
@@ -2453,21 +2556,14 @@ class CircleAnnotation extends MarkupAnnotation {
           const xOffset = ((x1 - x0) / 2) * controlPointsDistance;
           const yOffset = ((y1 - y0) / 2) * controlPointsDistance;
 
-          buffer.push(`${xMid} ${y1} m`);
           buffer.push(
-            `${xMid + xOffset} ${y1} ${x1} ${yMid + yOffset} ${x1} ${yMid} c`
+            `${xMid} ${y1} m`,
+            `${xMid + xOffset} ${y1} ${x1} ${yMid + yOffset} ${x1} ${yMid} c`,
+            `${x1} ${yMid - yOffset} ${xMid + xOffset} ${y0} ${xMid} ${y0} c`,
+            `${xMid - xOffset} ${y0} ${x0} ${yMid - yOffset} ${x0} ${yMid} c`,
+            `${x0} ${yMid + yOffset} ${xMid - xOffset} ${y1} ${xMid} ${y1} c`,
+            "h"
           );
-          buffer.push(
-            `${x1} ${yMid - yOffset} ${xMid + xOffset} ${y0} ${xMid} ${y0} c`
-          );
-          buffer.push(
-            `${xMid - xOffset} ${y0} ${x0} ${yMid - yOffset} ${x0} ${yMid} c`
-          );
-          buffer.push(
-            `${x0} ${yMid + yOffset} ${xMid - xOffset} ${y1} ${xMid} ${y1} c`
-          );
-
-          buffer.push("h");
           if (fillColor) {
             buffer.push("B");
           } else {
@@ -2498,6 +2594,47 @@ class PolylineAnnotation extends MarkupAnnotation {
       this.data.vertices.push({
         x: rawVertices[i],
         y: rawVertices[i + 1],
+      });
+    }
+
+    if (!this.appearance) {
+      // The default stroke color is black.
+      const strokeColor = this.color
+        ? Array.from(this.color).map(c => c / 255)
+        : [0, 0, 0];
+      const strokeAlpha = parameters.dict.get("CA");
+
+      const borderWidth = this.borderStyle.width || 1,
+        borderAdjust = 2 * borderWidth;
+
+      // If the /Rect-entry is empty/wrong, create a fallback rectangle so that
+      // we get similar rendering/highlighting behaviour as in Adobe Reader.
+      const bbox = [Infinity, Infinity, -Infinity, -Infinity];
+      for (const vertex of this.data.vertices) {
+        bbox[0] = Math.min(bbox[0], vertex.x - borderAdjust);
+        bbox[1] = Math.min(bbox[1], vertex.y - borderAdjust);
+        bbox[2] = Math.max(bbox[2], vertex.x + borderAdjust);
+        bbox[3] = Math.max(bbox[3], vertex.y + borderAdjust);
+      }
+      if (!Util.intersect(this.rectangle, bbox)) {
+        this.rectangle = bbox;
+      }
+
+      this._setDefaultAppearance({
+        xref: parameters.xref,
+        extra: `${borderWidth} w`,
+        strokeColor,
+        strokeAlpha,
+        pointsCallback: (buffer, points) => {
+          const vertices = this.data.vertices;
+          for (let i = 0, ii = vertices.length; i < ii; i++) {
+            buffer.push(
+              `${vertices[i].x} ${vertices[i].y} ${i === 0 ? "m" : "l"}`
+            );
+          }
+          buffer.push("S");
+          return [points[0].x, points[1].x, points[3].y, points[1].y];
+        },
       });
     }
   }
@@ -2545,6 +2682,54 @@ class InkAnnotation extends MarkupAnnotation {
         });
       }
     }
+
+    if (!this.appearance) {
+      // The default stroke color is black.
+      const strokeColor = this.color
+        ? Array.from(this.color).map(c => c / 255)
+        : [0, 0, 0];
+      const strokeAlpha = parameters.dict.get("CA");
+
+      const borderWidth = this.borderStyle.width || 1,
+        borderAdjust = 2 * borderWidth;
+
+      // If the /Rect-entry is empty/wrong, create a fallback rectangle so that
+      // we get similar rendering/highlighting behaviour as in Adobe Reader.
+      const bbox = [Infinity, Infinity, -Infinity, -Infinity];
+      for (const inkLists of this.data.inkLists) {
+        for (const vertex of inkLists) {
+          bbox[0] = Math.min(bbox[0], vertex.x - borderAdjust);
+          bbox[1] = Math.min(bbox[1], vertex.y - borderAdjust);
+          bbox[2] = Math.max(bbox[2], vertex.x + borderAdjust);
+          bbox[3] = Math.max(bbox[3], vertex.y + borderAdjust);
+        }
+      }
+      if (!Util.intersect(this.rectangle, bbox)) {
+        this.rectangle = bbox;
+      }
+
+      this._setDefaultAppearance({
+        xref: parameters.xref,
+        extra: `${borderWidth} w`,
+        strokeColor,
+        strokeAlpha,
+        pointsCallback: (buffer, points) => {
+          // According to the specification, see "12.5.6.13 Ink Annotations":
+          //   When drawn, the points shall be connected by straight lines or
+          //   curves in an implementation-dependent way.
+          // In order to simplify things, we utilize straight lines for now.
+          for (const inkList of this.data.inkLists) {
+            for (let i = 0, ii = inkList.length; i < ii; i++) {
+              buffer.push(
+                `${inkList[i].x} ${inkList[i].y} ${i === 0 ? "m" : "l"}`
+              );
+            }
+            buffer.push("S");
+          }
+          return [points[0].x, points[1].x, points[3].y, points[1].y];
+        },
+      });
+    }
   }
 }
 
@@ -2558,21 +2743,36 @@ class HighlightAnnotation extends MarkupAnnotation {
       null
     ));
     if (quadPoints) {
-      if (!this.appearance) {
+      const resources =
+        this.appearance && this.appearance.dict.get("Resources");
+
+      if (!this.appearance || !(resources && resources.has("ExtGState"))) {
+        if (this.appearance) {
+          // Workaround for cases where there's no /ExtGState-entry directly
+          // available, e.g. when the appearance stream contains a /XObject of
+          // the /Form-type, since that causes the highlighting to completely
+          // obsure the PDF content below it (fixes issue13242.pdf).
+          warn("HighlightAnnotation - ignoring built-in appearance stream.");
+        }
         // Default color is yellow in Acrobat Reader
         const fillColor = this.color
           ? Array.from(this.color).map(c => c / 255)
           : [1, 1, 0];
+        const fillAlpha = parameters.dict.get("CA");
+
         this._setDefaultAppearance({
           xref: parameters.xref,
           fillColor,
           blendMode: "Multiply",
+          fillAlpha,
           pointsCallback: (buffer, points) => {
-            buffer.push(`${points[0].x} ${points[0].y} m`);
-            buffer.push(`${points[1].x} ${points[1].y} l`);
-            buffer.push(`${points[3].x} ${points[3].y} l`);
-            buffer.push(`${points[2].x} ${points[2].y} l`);
-            buffer.push("f");
+            buffer.push(
+              `${points[0].x} ${points[0].y} m`,
+              `${points[1].x} ${points[1].y} l`,
+              `${points[3].x} ${points[3].y} l`,
+              `${points[2].x} ${points[2].y} l`,
+              "f"
+            );
             return [points[0].x, points[1].x, points[3].y, points[1].y];
           },
         });
@@ -2598,14 +2798,19 @@ class UnderlineAnnotation extends MarkupAnnotation {
         const strokeColor = this.color
           ? Array.from(this.color).map(c => c / 255)
           : [0, 0, 0];
+        const strokeAlpha = parameters.dict.get("CA");
+
         this._setDefaultAppearance({
           xref: parameters.xref,
           extra: "[] 0 d 1 w",
           strokeColor,
+          strokeAlpha,
           pointsCallback: (buffer, points) => {
-            buffer.push(`${points[2].x} ${points[2].y} m`);
-            buffer.push(`${points[3].x} ${points[3].y} l`);
-            buffer.push("S");
+            buffer.push(
+              `${points[2].x} ${points[2].y} m`,
+              `${points[3].x} ${points[3].y} l`,
+              "S"
+            );
             return [points[0].x, points[1].x, points[3].y, points[1].y];
           },
         });
@@ -2632,10 +2837,13 @@ class SquigglyAnnotation extends MarkupAnnotation {
         const strokeColor = this.color
           ? Array.from(this.color).map(c => c / 255)
           : [0, 0, 0];
+        const strokeAlpha = parameters.dict.get("CA");
+
         this._setDefaultAppearance({
           xref: parameters.xref,
           extra: "[] 0 d 1 w",
           strokeColor,
+          strokeAlpha,
           pointsCallback: (buffer, points) => {
             const dy = (points[0].y - points[2].y) / 6;
             let shift = dy;
@@ -2675,20 +2883,21 @@ class StrikeOutAnnotation extends MarkupAnnotation {
         const strokeColor = this.color
           ? Array.from(this.color).map(c => c / 255)
           : [0, 0, 0];
+        const strokeAlpha = parameters.dict.get("CA");
+
         this._setDefaultAppearance({
           xref: parameters.xref,
           extra: "[] 0 d 1 w",
           strokeColor,
+          strokeAlpha,
           pointsCallback: (buffer, points) => {
             buffer.push(
-              `${(points[0].x + points[2].x) / 2}` +
-                ` ${(points[0].y + points[2].y) / 2} m`
+              `${(points[0].x + points[2].x) / 2} ` +
+                `${(points[0].y + points[2].y) / 2} m`,
+              `${(points[1].x + points[3].x) / 2} ` +
+                `${(points[1].y + points[3].y) / 2} l`,
+              "S"
             );
-            buffer.push(
-              `${(points[1].x + points[3].x) / 2}` +
-                ` ${(points[1].y + points[3].y) / 2} l`
-            );
-            buffer.push("S");
             return [points[0].x, points[1].x, points[3].y, points[1].y];
           },
         });

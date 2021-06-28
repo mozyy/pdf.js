@@ -41,13 +41,12 @@ class PDFLinkService {
     eventBus,
     externalLinkTarget = null,
     externalLinkRel = null,
-    externalLinkEnabled = true,
     ignoreDestinationZoom = false,
   } = {}) {
     this.eventBus = eventBus;
     this.externalLinkTarget = externalLinkTarget;
     this.externalLinkRel = externalLinkRel;
-    this.externalLinkEnabled = externalLinkEnabled;
+    this.externalLinkEnabled = true;
     this._ignoreDestinationZoom = ignoreDestinationZoom;
 
     this.baseUrl = null;
@@ -105,16 +104,6 @@ class PDFLinkService {
    */
   set rotation(value) {
     this.pdfViewer.pagesRotation = value;
-  }
-
-  /**
-   * @deprecated
-   */
-  navigateTo(dest) {
-    console.error(
-      "Deprecated method: `navigateTo`, use `goToDestination` instead."
-    );
-    this.goToDestination(dest);
   }
 
   /**

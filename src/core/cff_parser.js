@@ -599,6 +599,12 @@ const CFFParser = (function CFFParserClosure() {
         } else if (value === 11) {
           state.stackSize = stackSize;
           return true;
+        } else if (value === 0 && j === data.length) {
+          // Operator 0 is not used according to the current spec and
+          // it's the last char and consequently it's likely a terminator.
+          // So just replace it by endchar command to make OTS happy.
+          data[j - 1] = 14;
+          validationCommand = CharstringValidationData[14];
         } else {
           validationCommand = CharstringValidationData[value];
         }
@@ -626,6 +632,14 @@ const CFFParser = (function CFFParserClosure() {
                   ", expected: " +
                   validationCommand.min
               );
+
+              if (stackSize === 0) {
+                // Just "fix" the outline in replacing command by a endchar:
+                // it could lead to wrong rendering of some glyphs or not.
+                // For example, the pdf in #6132 is well-rendered.
+                data[j - 1] = 14;
+                return true;
+              }
               return false;
             }
           }
@@ -640,7 +654,9 @@ const CFFParser = (function CFFParserClosure() {
             } else if (stackSize > 1) {
               warn("Found too many parameters for stack-clearing command");
             }
-            if (stackSize > 0 && stack[stackSize - 1] >= 0) {
+            if (stackSize > 0) {
+              // Width can be any number since its the difference
+              // from nominalWidthX.
               state.width = stack[stackSize - 1];
             }
           }

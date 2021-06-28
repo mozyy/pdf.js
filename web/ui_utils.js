@@ -95,10 +95,11 @@ function getOutputScale(ctx) {
  * @param {Object} element - The element to be visible.
  * @param {Object} spot - An object with optional top and left properties,
  *   specifying the offset from the top left edge.
- * @param {boolean} skipOverflowHiddenElements - Ignore elements that have
- *   the CSS rule `overflow: hidden;` set. The default is false.
+ * @param {boolean} [scrollMatches] - When scrolling search results into view,
+ *   ignore elements that either: Contains marked content identifiers,
+ *   or have the CSS-rule `overflow: hidden;` set. The default value is `false`.
  */
-function scrollIntoView(element, spot, skipOverflowHiddenElements = false) {
+function scrollIntoView(element, spot, scrollMatches = false) {
   // Assuming offsetParent is available (it's not available when viewer is in
   // hidden iframe or object). We have to scroll: if the offsetParent is not set
   // producing the error. See also animationStarted.
@@ -112,15 +113,13 @@ function scrollIntoView(element, spot, skipOverflowHiddenElements = false) {
   while (
     (parent.clientHeight === parent.scrollHeight &&
       parent.clientWidth === parent.scrollWidth) ||
-    (skipOverflowHiddenElements &&
-      getComputedStyle(parent).overflow === "hidden")
+    (scrollMatches &&
+      (parent.classList.contains("markedContent") ||
+        getComputedStyle(parent).overflow === "hidden"))
   ) {
-    if (parent.dataset._scaleY) {
-      offsetY /= parent.dataset._scaleY;
-      offsetX /= parent.dataset._scaleX;
-    }
     offsetY += parent.offsetTop;
     offsetX += parent.offsetLeft;
+
     parent = parent.offsetParent;
     if (!parent) {
       return; // no need to scroll
@@ -775,22 +774,22 @@ class EventBus {
     let externalListeners;
     // Making copy of the listeners array in case if it will be modified
     // during dispatch.
-    eventListeners.slice(0).forEach(({ listener, external, once }) => {
+    for (const { listener, external, once } of eventListeners.slice(0)) {
       if (once) {
         this._off(eventName, listener);
       }
       if (external) {
         (externalListeners ||= []).push(listener);
-        return;
+        continue;
       }
       listener.apply(null, args);
-    });
+    }
     // Dispatch any "external" listeners *after* the internal ones, to give the
     // viewer components time to handle events and update their state first.
     if (externalListeners) {
-      externalListeners.forEach(listener => {
+      for (const listener of externalListeners) {
         listener.apply(null, args);
-      });
+      }
       externalListeners = null;
     }
     if (

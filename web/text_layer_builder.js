@@ -239,7 +239,7 @@ class TextLayerBuilder {
       const node = document.createTextNode(content);
       if (className) {
         const span = document.createElement("span");
-        span.className = className;
+        span.className = `${className} appended`;
         span.appendChild(node);
         div.appendChild(span);
         return;
@@ -317,13 +317,8 @@ class TextLayerBuilder {
     if (!this.renderingDone) {
       return;
     }
-    const {
-      findController,
-      matches,
-      pageIdx,
-      textContentItemsStr,
-      textDivs,
-    } = this;
+    const { findController, matches, pageIdx, textContentItemsStr, textDivs } =
+      this;
     let clearedUntilDivIdx = -1;
 
     // Clear all current matches.

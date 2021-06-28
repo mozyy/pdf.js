@@ -14,8 +14,12 @@
  */
 
 import {
+  $acceptWhitespace,
   $clean,
+  $content,
   $finalize,
+  $globalData,
+  $isCDATAXml,
   $nsAttributes,
   $onChild,
   $onText,
@@ -30,10 +34,12 @@ class XFAParser extends XMLParserBase {
     super();
     this._builder = new Builder();
     this._stack = [];
+    this._globalData = Object.create(null);
     this._ids = new Map();
     this._current = this._builder.buildRoot(this._ids);
     this._errorCode = XMLParserErrorCode.NoError;
     this._whiteRegex = /^\s+$/;
+    this._nbsps = /\xa0+/g;
   }
 
   parse(data) {
@@ -49,6 +55,14 @@ class XFAParser extends XMLParserBase {
   }
 
   onText(text) {
+    // Normally by definition a &nbsp is unbreakable
+    // but in real life Acrobat can break strings on &nbsp.
+    text = text.replace(this._nbsps, match => match.slice(1) + " ");
+    if (this._current[$acceptWhitespace]()) {
+      this._current[$onText](text);
+      return;
+    }
+
     if (this._whiteRegex.test(text)) {
       return;
     }
@@ -123,6 +137,7 @@ class XFAParser extends XMLParserBase {
       namespace,
       prefixes,
     });
+    node[$globalData] = this._globalData;
 
     if (isEmpty) {
       // No children: just push the node into its parent.
@@ -140,6 +155,14 @@ class XFAParser extends XMLParserBase {
 
   onEndElement(name) {
     const node = this._current;
+    if (node[$isCDATAXml]() && typeof node[$content] === "string") {
+      const parser = new XFAParser();
+      parser._globalData = this._globalData;
+      const root = parser.parse(node[$content]);
+      node[$content] = null;
+      node[$onChild](root);
+    }
+
     node[$finalize]();
     this._current = this._stack.pop();
     if (this._current[$onChild](node)) {

@@ -13,13 +13,23 @@
  * limitations under the License.
  */
 
+import { shadow } from "../../shared/util.js";
+
 const dimConverters = {
   pt: x => x,
   cm: x => (x / 2.54) * 72,
   mm: x => (x / (10 * 2.54)) * 72,
   in: x => x * 72,
+  px: x => x,
 };
 const measurementPattern = /([+-]?[0-9]+\.?[0-9]*)(.*)/;
+
+function stripQuotes(str) {
+  if (str.startsWith("'") || str.startsWith('"')) {
+    return str.slice(1, str.length - 1);
+  }
+  return str;
+}
 
 function getInteger({ data, defaultValue, validate }) {
   if (!data) {
@@ -163,6 +173,35 @@ function getBBox(data) {
   return { x, y, width, height };
 }
 
+class HTMLResult {
+  static get FAILURE() {
+    return shadow(this, "FAILURE", new HTMLResult(false, null, null, null));
+  }
+
+  static get EMPTY() {
+    return shadow(this, "EMPTY", new HTMLResult(true, null, null, null));
+  }
+
+  constructor(success, html, bbox, breakNode) {
+    this.success = success;
+    this.html = html;
+    this.bbox = bbox;
+    this.breakNode = breakNode;
+  }
+
+  isBreak() {
+    return !!this.breakNode;
+  }
+
+  static breakNode(node) {
+    return new HTMLResult(false, null, null, node);
+  }
+
+  static success(html, bbox = null) {
+    return new HTMLResult(true, html, bbox, null);
+  }
+}
+
 export {
   getBBox,
   getColor,
@@ -173,4 +212,6 @@ export {
   getRatio,
   getRelevant,
   getStringOption,
+  HTMLResult,
+  stripQuotes,
 };

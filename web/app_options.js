@@ -52,9 +52,6 @@ const defaultOptions = {
     value: false,
     kind: OptionKind.VIEWER + OptionKind.PREFERENCE,
   },
-  /**
-   * The `disablePreferences` is, conditionally, defined below.
-   */
   enablePermissions: {
     /** @type {boolean} */
     value: false,
@@ -68,11 +65,6 @@ const defaultOptions = {
   enableScripting: {
     /** @type {boolean} */
     value: true,
-    kind: OptionKind.VIEWER + OptionKind.PREFERENCE,
-  },
-  enableWebGL: {
-    /** @type {boolean} */
-    value: false,
     kind: OptionKind.VIEWER + OptionKind.PREFERENCE,
   },
   externalLinkRel: {
@@ -100,9 +92,6 @@ const defaultOptions = {
     value: "./images/",
     kind: OptionKind.VIEWER,
   },
-  /**
-   * The `locale` is, conditionally, defined below.
-   */
   maxCanvasPixels: {
     /** @type {number} */
     value: 16777216,
@@ -122,7 +111,7 @@ const defaultOptions = {
   renderer: {
     /** @type {string} */
     value: "canvas",
-    kind: OptionKind.VIEWER + OptionKind.PREFERENCE,
+    kind: OptionKind.VIEWER,
   },
   renderInteractiveForms: {
     /** @type {boolean} */
@@ -206,7 +195,7 @@ const defaultOptions = {
   enableXfa: {
     /** @type {boolean} */
     value: false,
-    kind: OptionKind.API,
+    kind: OptionKind.API + OptionKind.PREFERENCE,
   },
   fontExtraProperties: {
     /** @type {boolean} */
@@ -226,6 +215,14 @@ const defaultOptions = {
   pdfBug: {
     /** @type {boolean} */
     value: false,
+    kind: OptionKind.API,
+  },
+  standardFontDataUrl: {
+    /** @type {string} */
+    value:
+      typeof PDFJSDev === "undefined" || !PDFJSDev.test("PRODUCTION")
+        ? "../external/standard_fonts/"
+        : "../web/standard_fonts/",
     kind: OptionKind.API,
   },
   verbosity: {
@@ -270,6 +267,8 @@ if (
         : "../build/pdf.sandbox.js",
     kind: OptionKind.VIEWER,
   };
+
+  defaultOptions.renderer.kind += OptionKind.PREFERENCE;
 } else if (PDFJSDev.test("CHROME")) {
   defaultOptions.disableTelemetry = {
     /** @type {boolean} */

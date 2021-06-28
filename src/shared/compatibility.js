@@ -50,8 +50,16 @@ if (
     };
   })();
 
+  // Support: Node.js
+  (function checkDOMMatrix() {
+    if (globalThis.DOMMatrix || !isNodeJS) {
+      return;
+    }
+    globalThis.DOMMatrix = require("dommatrix/dist/dommatrix.js");
+  })();
+
   // Provides support for Object.fromEntries in legacy browsers.
-  // Support: Firefox<63, Chrome<73, Safari<12.1
+  // Support: Firefox<63, Chrome<73, Safari<12.1, Node.js<12.0.0
   (function checkObjectFromEntries() {
     if (Object.fromEntries) {
       return;
@@ -61,7 +69,7 @@ if (
 
   // Provides support for *recent* additions to the Promise specification,
   // however basic Promise support is assumed to be available natively.
-  // Support: Firefox<71, Chrome<76, Safari<13
+  // Support: Firefox<71, Chrome<76, Safari<13, Node.js<12.9.0
   (function checkPromise() {
     if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("IMAGE_DECODERS")) {
       // The current image decoders are synchronous, hence `Promise` shouldn't
@@ -74,7 +82,7 @@ if (
     globalThis.Promise = require("core-js/es/promise/index.js");
   })();
 
-  // Support: Safari<10.1, Node.js
+  // Support: Node.js
   (function checkReadableStream() {
     if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("IMAGE_DECODERS")) {
       // The current image decoders are synchronous, hence `ReadableStream`
@@ -100,42 +108,7 @@ if (
     if (isReadableStreamSupported) {
       return;
     }
-    globalThis.ReadableStream = require("web-streams-polyfill/dist/ponyfill.js").ReadableStream;
-  })();
-
-  // Provides support for String.prototype.padStart in legacy browsers.
-  // Support: Chrome<57, Safari<10
-  (function checkStringPadStart() {
-    if (String.prototype.padStart) {
-      return;
-    }
-    require("core-js/es/string/pad-start.js");
-  })();
-
-  // Provides support for String.prototype.padEnd in legacy browsers.
-  // Support: Chrome<57, Safari<10
-  (function checkStringPadEnd() {
-    if (String.prototype.padEnd) {
-      return;
-    }
-    require("core-js/es/string/pad-end.js");
-  })();
-
-  // Provides support for Object.values in legacy browsers.
-  // Support: Chrome<54, Safari<10.1
-  (function checkObjectValues() {
-    if (Object.values) {
-      return;
-    }
-    Object.values = require("core-js/es/object/values.js");
-  })();
-
-  // Provides support for Object.entries in legacy browsers.
-  // Support: Chrome<54, Safari<10.1
-  (function checkObjectEntries() {
-    if (Object.entries) {
-      return;
-    }
-    Object.entries = require("core-js/es/object/entries.js");
+    globalThis.ReadableStream =
+      require("web-streams-polyfill/dist/ponyfill.js").ReadableStream;
   })();
 }
