@@ -1096,6 +1096,8 @@ const PDFViewerApplication = {
       const errorWrapperConfig = this.appConfig.errorWrapper;
       const errorWrapper = errorWrapperConfig.container;
       errorWrapper.hidden = false;
+      // 隐藏loading -- yyue
+      document.querySelector(".pdf-circular-loading").style.display = "none";
 
       const errorMessage = errorWrapperConfig.errorMessage;
       errorMessage.textContent = message;

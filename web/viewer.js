@@ -282,16 +282,14 @@ function webViewerLoad() {
         PDFViewerApplication.eventBus.on("updateviewarea", () => {
           scrollHandler();
         });
-        Object.keys(PDFViewerApplication.eventBus._listeners).forEach(
-          key => {
-            PDFViewerApplication.eventBus.on(key, () => {
-              console.log(11, key);
-              // const vc = document.querySelector("#viewerContainer");
-              // const viewer = document.querySelector("#viewer");
-              // console.log(vc.clientHeight, viewer.clientHeight);
-            });
-          }
-        );
+        Object.keys(PDFViewerApplication.eventBus._listeners).forEach(key => {
+          PDFViewerApplication.eventBus.on(key, () => {
+            // console.log(11, key);
+            // const vc = document.querySelector("#viewerContainer");
+            // const viewer = document.querySelector("#viewer");
+            // console.log(vc.clientHeight, viewer.clientHeight);
+          });
+        });
       });
     });
   } else {

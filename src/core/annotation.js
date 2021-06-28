@@ -1224,6 +1224,11 @@ class WidgetAnnotation extends Annotation {
 
     data.readOnly = this.hasFieldFlag(AnnotationFieldFlag.READONLY);
     data.hidden = this._hasFlag(data.annotationFlags, AnnotationFlag.HIDDEN);
+
+    // 如果是输入框, 直接隐藏 -- yyue
+    if (["Tx", "Btn", "Ch"].includes(data.fieldType)) {
+      data.hidden = true;
+    }
   }
 
   /**
