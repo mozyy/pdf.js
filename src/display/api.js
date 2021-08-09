@@ -115,6 +115,12 @@ function setPDFNetworkStreamFactory(pdfNetworkStreamFactory) {
  */
 
 /**
+ * @typedef {Object} RefProxy
+ * @property {number} num
+ * @property {number} gen
+ */
+
+/**
  * Document initialization / loading parameters object.
  *
  * @typedef {Object} DocumentInitParameters
@@ -509,6 +515,12 @@ function _fetchDocument(worker, source, pdfDataRangeTransport, docId) {
 }
 
 /**
+ * @typedef {Object} OnProgressParameters
+ * @property {number} loaded - Currently loaded number of bytes.
+ * @property {number} total - Total number of bytes in the PDF file.
+ */
+
+/**
  * The loading task controls the operations required to load a PDF document
  * (such as network requests) and provides a way to listen for completion,
  * after which individual pages can be rendered.
@@ -522,8 +534,7 @@ function _fetchDocument(worker, source, pdfDataRangeTransport, docId) {
  *   {@link PasswordResponses}).
  * @property {function} [onProgress] - Callback to be able to monitor the
  *   loading progress of the PDF file (necessary to implement e.g. a loading
- *   bar). The callback receives an {Object} with the properties `loaded`
- *   ({number}) and `total` ({number}) that indicate how many bytes are loaded.
+ *   bar). The callback receives an {@link OnProgressParameters} argument.
  * @property {function} [onUnsupportedFeature] - Callback for when an
  *   unsupported feature is used in the PDF document. The callback receives an
  *   {@link UNSUPPORTED_FEATURES} argument.
@@ -575,9 +586,8 @@ const PDFDocumentLoadingTask = (function PDFDocumentLoadingTaskClosure() {
 
       /**
        * Callback to be able to monitor the loading progress of the PDF file
-       * (necessary to implement e.g. a loading bar). The callback receives
-       * an {Object} with the properties `loaded` ({number}) and `total`
-       * ({number}) that indicate how many bytes are loaded.
+       * (necessary to implement e.g. a loading bar).
+       * The callback receives an {@link OnProgressParameters} argument.
        * @type {function}
        */
       this.onProgress = null;
@@ -712,6 +722,18 @@ class PDFDocumentProxy {
   constructor(pdfInfo, transport) {
     this._pdfInfo = pdfInfo;
     this._transport = transport;
+
+    if (typeof PDFJSDev === "undefined" || PDFJSDev.test("GENERIC")) {
+      Object.defineProperty(this, "fingerprint", {
+        get() {
+          deprecated(
+            "`PDFDocumentProxy.fingerprint`, " +
+              "please use `PDFDocumentProxy.fingerprints` instead."
+          );
+          return this.fingerprints[0];
+        },
+      });
+    }
   }
 
   /**
@@ -729,10 +751,13 @@ class PDFDocumentProxy {
   }
 
   /**
-   * @type {string} A (not guaranteed to be) unique ID to identify a PDF.
+   * @type {Array<string, string|null>} A (not guaranteed to be) unique ID to
+   *   identify the PDF document.
+   *   NOTE: The first element will always be defined for all PDF documents,
+   *   whereas the second element is only defined for *modified* PDF documents.
    */
-  get fingerprint() {
-    return this._pdfInfo.fingerprint;
+  get fingerprints() {
+    return this._pdfInfo.fingerprints;
   }
 
   /**
@@ -760,12 +785,6 @@ class PDFDocumentProxy {
   getPage(pageNumber) {
     return this._transport.getPage(pageNumber);
   }
-
-  /**
-   * @typedef {Object} RefProxy
-   * @property {number} num
-   * @property {number} gen
-   */
 
   /**
    * @param {RefProxy} ref - The page reference.
@@ -1130,7 +1149,7 @@ class PDFDocumentProxy {
  * Page annotation parameters.
  *
  * @typedef {Object} GetAnnotationsParameters
- * @property {string} intent - Determines the annotations that will be fetched,
+ * @property {string} [intent] - Determines the annotations that are fetched,
  *   can be either 'display' (viewable annotations) or 'print' (printable
  *   annotations). If the parameter is omitted, all annotations are fetched.
  */
@@ -1166,6 +1185,14 @@ class PDFDocumentProxy {
  *   created from `PDFDocumentProxy.getOptionalContentConfig`. If `null`,
  *   the configuration will be fetched automatically with the default visibility
  *   states set.
+ */
+
+/**
+ * Page getOperatorList parameters.
+ *
+ * @typedef {Object} GetOperatorListParameters
+ * @property {string} [intent] - Rendering intent, can be 'display' or 'print'.
+ *   The default value is 'display'.
  */
 
 /**
@@ -1231,8 +1258,7 @@ class PDFPageProxy {
   }
 
   /**
-   * @type {Object} The reference that points to this page. It has `num` and
-   *   `gen` properties.
+   * @type {RefProxy | null} The reference that points to this page.
    */
   get ref() {
     return this._pageInfo.ref;
@@ -1281,12 +1307,18 @@ class PDFPageProxy {
    *   {Array} of the annotation objects.
    */
   getAnnotations({ intent = null } = {}) {
-    if (!this._annotationsPromise || this._annotationsIntent !== intent) {
+    const renderingIntent =
+      intent === "display" || intent === "print" ? intent : null;
+
+    if (
+      !this._annotationsPromise ||
+      this._annotationsIntent !== renderingIntent
+    ) {
       this._annotationsPromise = this._transport.getAnnotations(
         this._pageIndex,
-        intent
+        renderingIntent
       );
-      this._annotationsIntent = intent;
+      this._annotationsIntent = renderingIntent;
     }
     return this._annotationsPromise;
   }
@@ -1314,7 +1346,7 @@ class PDFPageProxy {
   /**
    * Begins the process of rendering a page to the desired context.
    *
-   * @param {RenderParameters} params Page render parameters.
+   * @param {RenderParameters} params - Page render parameters.
    * @returns {RenderTask} An object that contains a promise that is
    *   resolved when the page finishes rendering.
    */
@@ -1455,10 +1487,12 @@ class PDFPageProxy {
   }
 
   /**
+   * @param {GetOperatorListParameters} params - Page getOperatorList
+   *   parameters.
    * @returns {Promise<PDFOperatorList>} A promise resolved with an
-   *   {@link PDFOperatorList} object that represents page's operator list.
+   *   {@link PDFOperatorList} object that represents the page's operator list.
    */
-  getOperatorList() {
+  getOperatorList({ intent = "display" } = {}) {
     function operatorListChanged() {
       if (intentState.operatorList.lastChunk) {
         intentState.opListReadCapability.resolve(intentState.operatorList);
@@ -1467,7 +1501,9 @@ class PDFPageProxy {
       }
     }
 
-    const renderingIntent = "oplist";
+    const renderingIntent = `oplist-${
+      intent === "print" ? "print" : "display"
+    }`;
     let intentState = this._intentStates.get(renderingIntent);
     if (!intentState) {
       intentState = Object.create(null);
@@ -1582,7 +1618,7 @@ class PDFPageProxy {
         force: true,
       });
 
-      if (intent === "oplist") {
+      if (intent.startsWith("oplist-")) {
         // Avoid errors below, since the renderTasks are just stubs.
         continue;
       }
@@ -1802,6 +1838,16 @@ class LoopbackPort {
     function cloneValue(value) {
       // Trying to perform a structured clone close to the spec, including
       // transfers.
+      if (
+        typeof value === "function" ||
+        typeof value === "symbol" ||
+        value instanceof URL
+      ) {
+        throw new Error(
+          `LoopbackPort.postMessage - cannot clone: ${value?.toString()}`
+        );
+      }
+
       if (typeof value !== "object" || value === null) {
         return value;
       }
@@ -1840,9 +1886,6 @@ class LoopbackPort {
         }
         return result;
       }
-      if (value instanceof URL) {
-        throw new Error(`LoopbackPort.postMessage - cannot clone: ${value}`);
-      }
       result = Array.isArray(value) ? [] : Object.create(null);
       cloned.set(value, result); // Adding to cache now for cyclic references.
       // Cloning all value and object properties, however ignoring properties
@@ -1856,12 +1899,7 @@ class LoopbackPort {
         if (typeof desc.value === "undefined") {
           continue;
         }
-        if (typeof desc.value === "function") {
-          if (value.hasOwnProperty?.(i)) {
-            throw new Error(
-              `LoopbackPort.postMessage - cannot clone: ${value[i]}`
-            );
-          }
+        if (typeof desc.value === "function" && !value.hasOwnProperty?.(i)) {
           continue;
         }
         result[i] = cloneValue(desc.value);
@@ -2669,6 +2707,9 @@ class WorkerTransport {
             pageProxy.cleanupAfterRender = true;
           }
           break;
+        case "Pattern":
+          pageProxy.objs.resolve(id, imageData);
+          break;
         default:
           throw new Error(`Got unknown object type ${type}`);
       }
@@ -2790,6 +2831,7 @@ class WorkerTransport {
   saveDocument() {
     return this.messageHandler
       .sendWithPromise("SaveDocument", {
+        isPureXfa: !!this._htmlForXfa,
         numPages: this._numPages,
         annotationStorage: this.annotationStorage.serializable,
         filename: this._fullReader?.filename ?? null,

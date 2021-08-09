@@ -62,11 +62,13 @@
 !issue7872.pdf
 !issue7901.pdf
 !issue8061.pdf
+!bug1721218_reduced.pdf
 !issue8088.pdf
 !issue8125.pdf
 !issue8229.pdf
 !issue8276_reduced.pdf
 !issue8372.pdf
+!xfa_filled_imm1344e.pdf
 !issue8424.pdf
 !issue8480.pdf
 !bug1650302_reduced.pdf
@@ -205,6 +207,7 @@
 !issue11403_reduced.pdf
 !issue2074.pdf
 !scan-bad.pdf
+!issue13561_reduced.pdf
 !bug847420.pdf
 !bug860632.pdf
 !bug894572.pdf

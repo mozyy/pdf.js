@@ -16,9 +16,10 @@
 import {
   $extra,
   $flushHTML,
-  $getParent,
+  $getSubformParent,
   $getTemplateRoot,
   $isSplittable,
+  $isThereMoreWidth,
 } from "./xfa_object.js";
 import { measureToString } from "./html_utils.js";
 
@@ -51,10 +52,21 @@ import { measureToString } from "./html_utils.js";
  * returning.
  */
 
+function createLine(node, children) {
+  return {
+    name: "div",
+    attributes: {
+      class: [node.layout === "lr-tb" ? "xfaLr" : "xfaRl"],
+    },
+    children,
+  };
+}
+
 function flushHTML(node) {
   if (!node[$extra]) {
     return null;
   }
+
   const attributes = node[$extra].attributes;
   const html = {
     name: "div",
@@ -65,16 +77,17 @@ function flushHTML(node) {
   if (node[$extra].failingNode) {
     const htmlFromFailing = node[$extra].failingNode[$flushHTML]();
     if (htmlFromFailing) {
-      html.children.push(htmlFromFailing);
+      if (node.layout.endsWith("-tb")) {
+        html.children.push(createLine(node, [htmlFromFailing]));
+      } else {
+        html.children.push(htmlFromFailing);
+      }
     }
   }
 
   if (html.children.length === 0) {
     return null;
   }
-
-  node[$extra].children = [];
-  delete node[$extra].line;
 
   return html;
 }
@@ -83,9 +96,9 @@ function addHTML(node, html, bbox) {
   const extra = node[$extra];
   const availableSpace = extra.availableSpace;
 
+  const [x, y, w, h] = bbox;
   switch (node.layout) {
     case "position": {
-      const [x, y, w, h] = bbox;
       extra.width = Math.max(extra.width, x + w);
       extra.height = Math.max(extra.height, y + h);
       extra.children.push(html);
@@ -94,25 +107,19 @@ function addHTML(node, html, bbox) {
     case "lr-tb":
     case "rl-tb":
       if (!extra.line || extra.attempt === 1) {
-        extra.line = {
-          name: "div",
-          attributes: {
-            class: [node.layout === "lr-tb" ? "xfaLr" : "xfaRl"],
-          },
-          children: [],
-        };
+        extra.line = createLine(node, []);
         extra.children.push(extra.line);
+        extra.numberInLine = 0;
       }
+
+      extra.numberInLine += 1;
       extra.line.children.push(html);
 
       if (extra.attempt === 0) {
         // Add the element on the line
-        const [, , w, h] = bbox;
         extra.currentWidth += w;
         extra.height = Math.max(extra.height, extra.prevHeight + h);
       } else {
-        const [, , w, h] = bbox;
-        extra.width = Math.max(extra.width, extra.currentWidth);
         extra.currentWidth = w;
         extra.prevHeight = extra.height;
         extra.height += h;
@@ -120,11 +127,11 @@ function addHTML(node, html, bbox) {
         // The element has been added on a new line so switch to line mode now.
         extra.attempt = 0;
       }
+      extra.width = Math.max(extra.width, extra.currentWidth);
       break;
     case "rl-row":
     case "row": {
       extra.children.push(html);
-      const [, , w, h] = bbox;
       extra.width += w;
       extra.height = Math.max(extra.height, h);
       const height = measureToString(extra.height);
@@ -134,14 +141,12 @@ function addHTML(node, html, bbox) {
       break;
     }
     case "table": {
-      const [, , w, h] = bbox;
       extra.width = Math.min(availableSpace.width, Math.max(extra.width, w));
       extra.height += h;
       extra.children.push(html);
       break;
     }
     case "tb": {
-      const [, , , h] = bbox;
       extra.width = availableSpace.width;
       extra.height += h;
       extra.children.push(html);
@@ -191,8 +196,7 @@ function getAvailableSpace(node) {
 }
 
 function getTransformedBBox(node) {
-  // Take into account rotation and anchor the get the
-  // real bounding box.
+  // Take into account rotation and anchor to get the real bounding box.
   let w = node.w === "" ? NaN : node.w;
   let h = node.h === "" ? NaN : node.h;
   let [centerX, centerY] = [0, 0];
@@ -223,8 +227,7 @@ function getTransformedBBox(node) {
       break;
   }
 
-  let x;
-  let y;
+  let x, y;
   switch (node.rotate || 0) {
     case 0:
       [x, y] = [-centerX, -centerY];
@@ -257,72 +260,120 @@ function getTransformedBBox(node) {
  * in case of lr-tb or changing content area...).
  */
 function checkDimensions(node, space) {
+  if (node[$getTemplateRoot]()[$extra].firstUnsplittable === null) {
+    return true;
+  }
+
   if (node.w === 0 || node.h === 0) {
     return true;
   }
 
-  if (space.width <= 0 || space.height <= 0) {
-    return false;
-  }
+  const ERROR = 2;
+  const parent = node[$getSubformParent]();
+  const attempt = (parent[$extra] && parent[$extra].attempt) || 0;
 
-  const parent = node[$getParent]();
-  const attempt = (node[$extra] && node[$extra].attempt) || 0;
+  const [, y, w, h] = getTransformedBBox(node);
   switch (parent.layout) {
     case "lr-tb":
     case "rl-tb":
-      switch (attempt) {
-        case 0: {
-          let w, h;
-          if (node.w !== "" || node.h !== "") {
-            [, , w, h] = getTransformedBBox(node);
-          }
-          if (node.h !== "" && Math.round(h - space.height) > 1) {
+      if (attempt === 0) {
+        // Try to put an element in the line.
+
+        if (!node[$getTemplateRoot]()[$extra].noLayoutFailure) {
+          if (node.h !== "" && Math.round(h - space.height) > ERROR) {
+            // Not enough height.
             return false;
           }
+
           if (node.w !== "") {
-            return Math.round(w - space.width) <= 1;
+            if (Math.round(w - space.width) <= ERROR) {
+              return true;
+            }
+            if (parent[$extra].numberInLine === 0) {
+              return space.height > 0;
+            }
+
+            return false;
           }
 
-          return node.minW <= space.width;
+          return space.width > 0;
         }
-        case 1: {
-          if (node.h !== "" && !node[$isSplittable]()) {
-            const [, , , h] = getTransformedBBox(node);
-            if (Math.round(h - space.height) > 1) {
-              return false;
-            }
-          }
-          return true;
+
+        // No layout failure.
+
+        // Put the element on the line but we can fail
+        // and then in the second step (next line) we'll accept.
+        if (node.w !== "") {
+          return Math.round(w - space.width) <= ERROR;
         }
-        default:
-          return true;
+
+        return space.width > 0;
       }
+
+      // Second attempt: try to put the element on the next line.
+
+      if (node[$getTemplateRoot]()[$extra].noLayoutFailure) {
+        // We cannot fail.
+        return true;
+      }
+
+      if (node.h !== "" && Math.round(h - space.height) > ERROR) {
+        return false;
+      }
+
+      if (node.w === "" || Math.round(w - space.width) <= ERROR) {
+        return space.height > 0;
+      }
+
+      if (parent[$isThereMoreWidth]()) {
+        return false;
+      }
+
+      return space.height > 0;
     case "table":
     case "tb":
-      if (attempt !== 1 && node.h !== "" && !node[$isSplittable]()) {
-        const [, , , h] = getTransformedBBox(node);
-        if (Math.round(h - space.height) > 1) {
-          return false;
-        }
+      if (node[$getTemplateRoot]()[$extra].noLayoutFailure) {
+        return true;
       }
-      return true;
-    case "position":
-      const [x, y, w, h] = getTransformedBBox(node);
-      const isWidthOk = node.w === "" || Math.round(w + x - space.width) <= 1;
-      const isHeightOk = node.h === "" || Math.round(h + y - space.height) <= 1;
 
-      if (isWidthOk && isHeightOk) {
+      // If the node has a height then check if it's fine with available height.
+      // If the node is breakable then we can return true.
+      if (node.h !== "" && !node[$isSplittable]()) {
+        return Math.round(h - space.height) <= ERROR;
+      }
+      // Else wait and see: this node will be layed out itself
+      // in the provided space and maybe a children won't fit.
+
+      if (node.w === "" || Math.round(w - space.width) <= ERROR) {
+        return space.height > 0;
+      }
+
+      if (parent[$isThereMoreWidth]()) {
+        return false;
+      }
+
+      return space.height > 0;
+    case "position":
+      if (node[$getTemplateRoot]()[$extra].noLayoutFailure) {
+        return true;
+      }
+
+      if (node.h === "" || Math.round(h + y - space.height) <= ERROR) {
         return true;
       }
 
       const area = node[$getTemplateRoot]()[$extra].currentContentArea;
-      if (isWidthOk) {
-        return h + y > area.h;
-      }
-
-      return w + x > area.w;
+      return h + y > area.h;
     case "rl-row":
     case "row":
+      if (node[$getTemplateRoot]()[$extra].noLayoutFailure) {
+        return true;
+      }
+
+      if (node.h !== "") {
+        return Math.round(h - space.height) <= ERROR;
+      }
+      return true;
     default:
       // No layout, so accept everything.
       return true;

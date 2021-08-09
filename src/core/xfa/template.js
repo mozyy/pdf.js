@@ -21,22 +21,25 @@ import {
   $clean,
   $cleanPage,
   $content,
+  $data,
   $extra,
   $finalize,
   $flushHTML,
   $getAvailableSpace,
   $getChildren,
   $getContainedChildren,
+  $getExtra,
   $getNextPage,
   $getParent,
   $getSubformParent,
   $getTemplateRoot,
   $globalData,
-  $hasItem,
   $hasSettableValue,
   $ids,
+  $isBindable,
   $isCDATAXml,
   $isSplittable,
+  $isThereMoreWidth,
   $isTransparent,
   $isUsable,
   $namespaceId,
@@ -47,6 +50,7 @@ import {
   $searchNode,
   $setSetAttributes,
   $setValue,
+  $tabIndex,
   $text,
   $toHTML,
   $toStyle,
@@ -72,11 +76,12 @@ import {
   fixTextIndent,
   isPrintOnly,
   layoutClass,
-  layoutText,
+  layoutNode,
   measureToString,
   setAccess,
   setFontFamily,
   setMinMaxDimensions,
+  setPara,
   toStyle,
 } from "./html_utils.js";
 import {
@@ -110,6 +115,16 @@ const MAX_ATTEMPTS_FOR_LRTB_LAYOUT = 2;
 // the loop after having MAX_EMPTY_PAGES empty pages.
 const MAX_EMPTY_PAGES = 3;
 
+function hasMargin(node) {
+  return (
+    node.margin &&
+    (node.margin.topInset ||
+      node.margin.rightInset ||
+      node.margin.bottomInset ||
+      node.margin.leftInset)
+  );
+}
+
 function _setValue(templateNode, value) {
   if (!templateNode.value) {
     const nodeValue = new Value({});
@@ -129,15 +144,151 @@ function* getContainedChildren(node) {
   }
 }
 
+function setTabIndex(node) {
+  while (node) {
+    if (!node.traversal || node[$tabIndex]) {
+      return;
+    }
+
+    let next = null;
+    for (const child of node.traversal[$getChildren]()) {
+      if (child.operation === "next") {
+        next = child;
+        break;
+      }
+    }
+
+    if (!next || !next.ref) {
+      return;
+    }
+
+    const root = node[$getTemplateRoot]();
+    node[$tabIndex] = ++root[$tabIndex];
+
+    const ref = root[$searchNode](next.ref, node);
+    if (!ref) {
+      return;
+    }
+
+    node = ref[0];
+  }
+}
+
 function valueToHtml(value) {
   return HTMLResult.success({
-    name: "span",
+    name: "div",
     attributes: {
       class: ["xfaRich"],
       style: Object.create(null),
     },
-    value,
+    children: [
+      {
+        name: "span",
+        attributes: {
+          style: Object.create(null),
+        },
+        value,
+      },
+    ],
   });
+}
+
+function setFirstUnsplittable(node) {
+  const root = node[$getTemplateRoot]();
+  if (root[$extra].firstUnsplittable === null) {
+    root[$extra].firstUnsplittable = node;
+    root[$extra].noLayoutFailure = true;
+  }
+}
+
+function unsetFirstUnsplittable(node) {
+  const root = node[$getTemplateRoot]();
+  if (root[$extra].firstUnsplittable === node) {
+    root[$extra].noLayoutFailure = false;
+  }
+}
+
+function handleBreak(node) {
+  if (node[$extra]) {
+    return false;
+  }
+
+  node[$extra] = Object.create(null);
+
+  if (node.targetType === "auto") {
+    return false;
+  }
+
+  const root = node[$getTemplateRoot]();
+  let target = null;
+  if (node.target) {
+    target = root[$searchNode](node.target, node[$getParent]());
+    if (!target) {
+      return false;
+    }
+    target = target[0];
+  }
+
+  const { currentPageArea, currentContentArea } = root[$extra];
+
+  if (node.targetType === "pageArea") {
+    if (!(target instanceof PageArea)) {
+      target = null;
+    }
+
+    if (node.startNew) {
+      node[$extra].target = target || currentPageArea;
+      return true;
+    } else if (target && target !== currentPageArea) {
+      node[$extra].target = target;
+      return true;
+    }
+
+    return false;
+  }
+
+  if (!(target instanceof ContentArea)) {
+    target = null;
+  }
+
+  const pageArea = target && target[$getParent]();
+
+  let index;
+  if (node.startNew) {
+    if (target) {
+      const contentAreas = pageArea.contentArea.children;
+      index = contentAreas.findIndex(e => e === target) - 1;
+    } else {
+      index = currentPageArea.contentArea.children.findIndex(
+        e => e === currentContentArea
+      );
+    }
+  } else if (target && target !== currentContentArea) {
+    const contentAreas = pageArea.contentArea.children;
+    index = contentAreas.findIndex(e => e === target) - 1;
+  } else {
+    return false;
+  }
+
+  node[$extra].target = pageArea === currentPageArea ? null : pageArea;
+  node[$extra].index = index;
+  return true;
+}
+
+function handleOverflow(node, extraNode, space) {
+  const root = node[$getTemplateRoot]();
+  const saved = root[$extra].noLayoutFailure;
+  const savedMethod = extraNode[$getSubformParent];
+
+  // Replace $getSubformParent to emulate that extraNode is just
+  // under node.
+  extraNode[$getSubformParent] = () => node;
+
+  root[$extra].noLayoutFailure = true;
+  const res = extraNode[$toHTML](space);
+  node[$addHTML](res.html, res.bbox);
+  root[$extra].noLayoutFailure = saved;
+  extraNode[$getSubformParent] = savedMethod;
 }
 
 class AppearanceFilter extends StringObject {
@@ -180,22 +331,22 @@ class Arc extends XFAObject {
     const edge = this.edge ? this.edge : new Edge({});
     const edgeStyle = edge[$toStyle]();
     const style = Object.create(null);
-    if (this.fill) {
+    if (this.fill && this.fill.presence === "visible") {
       Object.assign(style, this.fill[$toStyle]());
     } else {
       style.fill = "transparent";
     }
     style.strokeWidth = measureToString(
-      edge.presence === "visible" ? Math.round(edge.thickness) : 0
+      edge.presence === "visible" ? edge.thickness : 0
     );
     style.stroke = edgeStyle.color;
     let arc;
     const attributes = {
       xmlns: SVG_NS,
       style: {
-        position: "absolute",
         width: "100%",
         height: "100%",
+        overflow: "visible",
       },
     };
 
@@ -238,11 +389,29 @@ class Arc extends XFAObject {
       });
     }
 
-    return HTMLResult.success({
+    const svg = {
       name: "svg",
       children: [arc],
       attributes,
-    });
+    };
+
+    const parent = this[$getParent]()[$getParent]();
+    if (hasMargin(parent)) {
+      return HTMLResult.success({
+        name: "div",
+        attributes: {
+          style: {
+            display: "inline",
+            width: "100%",
+            height: "100%",
+          },
+        },
+        children: [svg],
+      });
+    }
+
+    svg.attributes.style.position = "absolute";
+    return HTMLResult.success(svg);
   }
 }
 
@@ -366,6 +535,12 @@ class Assist extends XFAObject {
     this.usehref = attributes.usehref || "";
     this.speak = null;
     this.toolTip = null;
+  }
+
+  [$toHTML]() {
+    return this.toolTip && this.toolTip[$content]
+      ? this.toolTip[$content]
+      : null;
   }
 }
 
@@ -572,7 +747,7 @@ class BooleanElement extends Option01 {
   }
 
   [$toHTML](availableSpace) {
-    return valueToHtml(this[$content] === 1);
+    return valueToHtml(this[$content] === 1 ? "1" : "0");
   }
 }
 
@@ -630,7 +805,7 @@ class Border extends XFAObject {
       Object.assign(style, this.margin[$toStyle]());
     }
 
-    if (this.fill) {
+    if (this.fill && this.fill.presence === "visible") {
       Object.assign(style, this.fill[$toStyle]());
     }
 
@@ -717,8 +892,6 @@ class BreakAfter extends XFAObject {
       "auto",
       "contentArea",
       "pageArea",
-      "pageEven",
-      "pageOdd",
     ]);
     this.trailer = attributes.trailer || "";
     this.use = attributes.use || "";
@@ -742,8 +915,6 @@ class BreakBefore extends XFAObject {
       "auto",
       "contentArea",
       "pageArea",
-      "pageEven",
-      "pageOdd",
     ]);
     this.trailer = attributes.trailer || "";
     this.use = attributes.use || "";
@@ -821,7 +992,7 @@ class Caption extends XFAObject {
       "inactive",
       "invisible",
     ]);
-    this.reserve = getMeasurement(attributes.reserve);
+    this.reserve = Math.ceil(getMeasurement(attributes.reserve));
     this.use = attributes.use || "";
     this.usehref = attributes.usehref || "";
     this.extras = null;
@@ -835,6 +1006,26 @@ class Caption extends XFAObject {
     _setValue(this, value);
   }
 
+  [$getExtra](availableSpace) {
+    if (!this[$extra]) {
+      let { width, height } = availableSpace;
+      switch (this.placement) {
+        case "left":
+        case "right":
+        case "inline":
+          width = this.reserve <= 0 ? width : this.reserve;
+          break;
+        case "top":
+        case "bottom":
+          height = this.reserve <= 0 ? height : this.reserve;
+          break;
+      }
+
+      this[$extra] = layoutNode(this, { width, height });
+    }
+    return this[$extra];
+  }
+
   [$toHTML](availableSpace) {
     // TODO: incomplete.
     if (!this.value) {
@@ -845,6 +1036,23 @@ class Caption extends XFAObject {
     if (!value) {
       return HTMLResult.EMPTY;
     }
+
+    const savedReserve = this.reserve;
+    if (this.reserve <= 0) {
+      const { w, h } = this[$getExtra](availableSpace);
+      switch (this.placement) {
+        case "left":
+        case "right":
+        case "inline":
+          this.reserve = w;
+          break;
+        case "top":
+        case "bottom":
+          this.reserve = h;
+          break;
+      }
+    }
+
     const children = [];
     if (typeof value === "string") {
       children.push({
@@ -855,25 +1063,25 @@ class Caption extends XFAObject {
       children.push(value);
     }
 
-    const style = toStyle(this, "font", "margin", "para", "visibility");
+    const style = toStyle(this, "font", "margin", "visibility");
     switch (this.placement) {
       case "left":
       case "right":
         if (this.reserve > 0) {
           style.width = measureToString(this.reserve);
-        } else {
-          style.minWidth = measureToString(this.reserve);
         }
         break;
       case "top":
       case "bottom":
         if (this.reserve > 0) {
           style.height = measureToString(this.reserve);
-        } else {
-          style.minHeight = measureToString(this.reserve);
         }
         break;
     }
+
+    setPara(this, null, value);
+
+    this.reserve = savedReserve;
 
     return HTMLResult.success({
       name: "div",
@@ -950,17 +1158,31 @@ class CheckButton extends XFAObject {
     let type;
     let className;
     let groupId;
-    let id;
-    const fieldId = this[$getParent]()[$getParent]()[$uid];
-    const container = this[$getParent]()[$getParent]()[$getParent]();
+    const field = this[$getParent]()[$getParent]();
+    const items =
+      (field.items.children.length &&
+        field.items.children[0][$toHTML]().html) ||
+      [];
+    const exportedValue = {
+      on: (items[0] || "on").toString(),
+      off: (items[1] || "off").toString(),
+    };
+
+    const value = (field.value && field.value[$text]()) || "off";
+    const checked = value === exportedValue.on || undefined;
+    const container = field[$getSubformParent]();
+    const fieldId = field[$uid];
+    let dataId;
+
     if (container instanceof ExclGroup) {
       groupId = container[$uid];
       type = "radio";
       className = "xfaRadio";
-      id = `${fieldId}-radio`;
+      dataId = (container[$data] && container[$data][$uid]) || container[$uid];
     } else {
       type = "checkbox";
       className = "xfaCheckbox";
+      dataId = (field[$data] && field[$data][$uid]) || field[$uid];
     }
 
     const input = {
@@ -969,13 +1191,12 @@ class CheckButton extends XFAObject {
         class: [className],
         style,
         fieldId,
+        dataId,
         type,
+        checked,
+        xfaOn: exportedValue.on,
       },
     };
-
-    if (id) {
-      input.attributes.id = id;
-    }
 
     if (groupId) {
       input.attributes.name = groupId;
@@ -1022,25 +1243,48 @@ class ChoiceList extends XFAObject {
     const children = [];
 
     if (field.items.children.length > 0) {
-      const displayed = field.items.children[0][$toHTML]().html;
-      const values = field.items.children[1]
-        ? field.items.children[1][$toHTML]().html
-        : [];
+      const items = field.items;
+      let displayedIndex = 0;
+      let saveIndex = 0;
+      if (items.children.length === 2) {
+        displayedIndex = items.children[0].save;
+        saveIndex = 1 - displayedIndex;
+      }
+      const displayed = items.children[displayedIndex][$toHTML]().html;
+      const values = items.children[saveIndex][$toHTML]().html;
 
+      let selected = false;
+      const value = (field.value && field.value[$text]()) || "";
       for (let i = 0, ii = displayed.length; i < ii; i++) {
-        children.push({
+        const option = {
           name: "option",
           attributes: {
             value: values[i] || displayed[i],
           },
           value: displayed[i],
+        };
+        if (values[i] === value) {
+          option.attributes.selected = selected = true;
+        }
+        children.push(option);
+      }
+
+      if (!selected) {
+        children.splice(0, 0, {
+          name: "option",
+          attributes: {
+            hidden: true,
+            selected: true,
+          },
+          value: " ",
         });
       }
     }
 
     const selectAttributes = {
       class: ["xfaSelect"],
-      fieldId: this[$getParent]()[$getParent]()[$uid],
+      fieldId: field[$uid],
+      dataId: (field[$data] && field[$data][$uid]) || field[$uid],
       style,
     };
 
@@ -1139,7 +1383,6 @@ class ContentArea extends XFAObject {
     const top = measureToString(this.y);
 
     const style = {
-      position: "absolute",
       left,
       top,
       width: measureToString(this.w),
@@ -1272,11 +1515,13 @@ class DateTimeEdit extends XFAObject {
     // When the picker is host we should use type=date for the input
     // but we need to put the buttons outside the text-field.
     const style = toStyle(this, "border", "font", "margin");
+    const field = this[$getParent]()[$getParent]();
     const html = {
       name: "input",
       attributes: {
         type: "text",
-        fieldId: this[$getParent]()[$getParent]()[$uid],
+        fieldId: field[$uid],
+        dataId: (field[$data] && field[$data][$uid]) || field[$uid],
         class: ["xfaTextfield"],
         style,
       },
@@ -1456,64 +1701,35 @@ class Draw extends XFAObject {
 
     fixDimensions(this);
 
-    if ((this.w === "" || this.h === "") && this.value) {
-      let marginH = 0;
-      let marginV = 0;
-      if (this.margin) {
-        marginH = this.margin.leftInset + this.margin.rightInset;
-        marginV = this.margin.topInset + this.margin.bottomInset;
+    // If at least one dimension is missing and we've a text
+    // then we can guess it in laying out the text.
+    const savedW = this.w;
+    const savedH = this.h;
+    const { w, h, isBroken } = layoutNode(this, availableSpace);
+    if (w && this.w === "") {
+      // If the parent layout is lr-tb with a w=100 and we already have a child
+      // which takes 90 on the current line.
+      // If we have a text with a length (in px) equal to 100 then it'll be
+      // splitted into almost 10 chunks: so it won't be nice.
+      // So if we've potentially more width to provide in some parent containers
+      // let's increase it to give a chance to have a better rendering.
+      if (isBroken && this[$getSubformParent]()[$isThereMoreWidth]()) {
+        return HTMLResult.FAILURE;
       }
 
-      const maxWidth = this.w === "" ? availableSpace.width : this.w;
-      const fontFinder = this[$globalData].fontFinder;
-      let font = this.font;
-      if (!font) {
-        let parent = this[$getParent]();
-        while (!(parent instanceof Template)) {
-          if (parent.font) {
-            font = parent.font;
-            break;
-          }
-          parent = parent[$getParent]();
-        }
-      }
-
-      let height = null;
-      let width = null;
-      if (
-        this.value.exData &&
-        this.value.exData[$content] &&
-        this.value.exData.contentType === "text/html"
-      ) {
-        const res = layoutText(
-          this.value.exData[$content],
-          font,
-          fontFinder,
-          maxWidth
-        );
-        width = res.width;
-        height = res.height;
-      } else {
-        const text = this.value[$text]();
-        if (text) {
-          const res = layoutText(text, font, fontFinder, maxWidth);
-          width = res.width;
-          height = res.height;
-        }
-      }
-
-      if (width !== null && this.w === "") {
-        this.w = width + marginH;
-      }
-
-      if (height !== null && this.h === "") {
-        this.h = height + marginV;
-      }
+      this.w = w;
+    }
+    if (h && this.h === "") {
+      this.h = h;
     }
 
+    setFirstUnsplittable(this);
     if (!checkDimensions(this, availableSpace)) {
+      this.w = savedW;
+      this.h = savedH;
       return HTMLResult.FAILURE;
     }
+    unsetFirstUnsplittable(this);
 
     const style = toStyle(
       this,
@@ -1529,6 +1745,11 @@ class Draw extends XFAObject {
     );
 
     setMinMaxDimensions(this, style);
+
+    if (style.margin) {
+      style.padding = style.margin;
+      delete style.margin;
+    }
 
     const classNames = ["xfaDraw"];
     if (this.font) {
@@ -1554,50 +1775,25 @@ class Draw extends XFAObject {
       children: [],
     };
 
+    const assist = this.assist ? this.assist[$toHTML]() : null;
+    if (assist) {
+      html.attributes.title = assist;
+    }
+
     const bbox = computeBbox(this, html, availableSpace);
 
     const value = this.value ? this.value[$toHTML](availableSpace).html : null;
     if (value === null) {
+      this.w = savedW;
+      this.h = savedH;
       return HTMLResult.success(createWrapper(this, html), bbox);
     }
 
     html.children.push(value);
-    if (value.attributes.class && value.attributes.class.includes("xfaRich")) {
-      if (this.h === "") {
-        style.height = "auto";
-      }
-      if (this.w === "") {
-        style.width = "auto";
-      }
-      if (this.para) {
-        // By definition exData are external data so para
-        // has no effect on it.
-        attributes.style.display = "flex";
-        attributes.style.flexDirection = "column";
-        switch (this.para.vAlign) {
-          case "top":
-            attributes.style.justifyContent = "start";
-            break;
-          case "bottom":
-            attributes.style.justifyContent = "end";
-            break;
-          case "middle":
-            attributes.style.justifyContent = "center";
-            break;
-        }
+    setPara(this, style, value);
 
-        const paraStyle = this.para[$toStyle]();
-        if (!value.attributes.style) {
-          value.attributes.style = paraStyle;
-        } else {
-          for (const [key, val] of Object.entries(paraStyle)) {
-            if (!(key in value.attributes.style)) {
-              value.attributes.style[key] = val;
-            }
-          }
-        }
-      }
-    }
+    this.w = savedW;
+    this.h = savedH;
 
     return HTMLResult.success(createWrapper(this, html), bbox);
   }
@@ -1976,6 +2172,10 @@ class ExclGroup extends XFAObject {
     this.setProperty = new XFAObjectArray();
   }
 
+  [$isBindable]() {
+    return true;
+  }
+
   [$hasSettableValue]() {
     return true;
   }
@@ -1988,38 +2188,46 @@ class ExclGroup extends XFAObject {
         field.value = nodeValue;
       }
 
-      const nodeBoolean = new BooleanElement({});
-      nodeBoolean[$content] = 0;
-
-      for (const item of field.items.children) {
-        if (item[$hasItem](value)) {
-          nodeBoolean[$content] = 1;
-          break;
-        }
-      }
-
-      field.value[$setValue](nodeBoolean);
+      field.value[$setValue](value);
     }
+  }
+
+  [$isThereMoreWidth]() {
+    return (
+      (this.layout.endsWith("-tb") &&
+        this[$extra].attempt === 0 &&
+        this[$extra].numberInLine > 0) ||
+      this[$getParent]()[$isThereMoreWidth]()
+    );
   }
 
   [$isSplittable]() {
     // We cannot cache the result here because the contentArea
     // can change.
-    const root = this[$getTemplateRoot]();
-    const contentArea = root[$extra].currentContentArea;
-    if (contentArea && Math.max(this.minH, this.h || 0) >= contentArea.h) {
-      return true;
-    }
-
-    if (this.layout === "position") {
+    const parent = this[$getSubformParent]();
+    if (!parent[$isSplittable]()) {
       return false;
     }
 
-    const parentLayout = this[$getParent]().layout;
-    if (parentLayout && parentLayout.includes("row")) {
+    if (this[$extra]._isSplittable !== undefined) {
+      return this[$extra]._isSplittable;
+    }
+
+    if (this.layout === "position" || this.layout.includes("row")) {
+      this[$extra]._isSplittable = false;
       return false;
     }
 
+    if (
+      parent.layout &&
+      parent.layout.endsWith("-tb") &&
+      parent[$extra].numberInLine !== 0
+    ) {
+      // See comment in Subform::[$isSplittable] for an explanation.
+      return false;
+    }
+
+    this[$extra]._isSplittable = true;
     return true;
   }
 
@@ -2063,12 +2271,22 @@ class ExclGroup extends XFAObject {
       children,
       attributes,
       attempt: 0,
-      availableSpace,
+      line: null,
+      numberInLine: 0,
+      availableSpace: {
+        width: Math.min(this.w || Infinity, availableSpace.width),
+        height: Math.min(this.h || Infinity, availableSpace.height),
+      },
       width: 0,
       height: 0,
       prevHeight: 0,
       currentWidth: 0,
     });
+
+    const isSplittable = this[$isSplittable]();
+    if (!isSplittable) {
+      setFirstUnsplittable(this);
+    }
 
     if (!checkDimensions(this, availableSpace)) {
       return HTMLResult.FAILURE;
@@ -2081,8 +2299,8 @@ class ExclGroup extends XFAObject {
 
     const filter = new Set(["field"]);
 
-    if (this.layout === "row") {
-      const columnWidths = this[$getParent]().columnWidths;
+    if (this.layout.includes("row")) {
+      const columnWidths = this[$getSubformParent]().columnWidths;
       if (Array.isArray(columnWidths) && columnWidths.length > 0) {
         this[$extra].columnWidths = columnWidths;
         this[$extra].currentColumn = 0;
@@ -2116,39 +2334,43 @@ class ExclGroup extends XFAObject {
       attributes.xfaName = this.name;
     }
 
-    let failure;
-    if (this.layout === "lr-tb" || this.layout === "rl-tb") {
-      for (
-        ;
-        this[$extra].attempt < MAX_ATTEMPTS_FOR_LRTB_LAYOUT;
-        this[$extra].attempt++
-      ) {
-        const result = this[$childrenToHTML]({
-          filter,
-          include: true,
-        });
-        if (result.success) {
-          break;
-        }
-        if (result.isBreak()) {
-          return result;
-        }
+    const isLrTb = this.layout === "lr-tb" || this.layout === "rl-tb";
+    const maxRun = isLrTb ? MAX_ATTEMPTS_FOR_LRTB_LAYOUT : 1;
+    for (; this[$extra].attempt < maxRun; this[$extra].attempt++) {
+      if (isLrTb && this[$extra].attempt === MAX_ATTEMPTS_FOR_LRTB_LAYOUT - 1) {
+        // If the layout is lr-tb then having attempt equals to
+        // MAX_ATTEMPTS_FOR_LRTB_LAYOUT-1 means that we're trying to layout
+        // on the next line so this on is empty.
+        this[$extra].numberInLine = 0;
       }
-
-      failure = this[$extra].attempt === MAX_ATTEMPTS_FOR_LRTB_LAYOUT;
-    } else {
       const result = this[$childrenToHTML]({
         filter,
         include: true,
       });
-      failure = !result.success;
-      if (failure && result.isBreak()) {
+      if (result.success) {
+        break;
+      }
+      if (result.isBreak()) {
         return result;
+      }
+      if (
+        isLrTb &&
+        this[$extra].attempt === 0 &&
+        this[$extra].numberInLine === 0 &&
+        !this[$getTemplateRoot]()[$extra].noLayoutFailure
+      ) {
+        // See comment in Subform::[$toHTML].
+        this[$extra].attempt = maxRun;
+        break;
       }
     }
 
-    if (failure) {
-      if (this[$isSplittable]()) {
+    if (!isSplittable) {
+      unsetFirstUnsplittable(this);
+    }
+
+    if (this[$extra].attempt === maxRun) {
+      if (!isSplittable) {
         delete this[$extra];
       }
       return HTMLResult.FAILURE;
@@ -2177,6 +2399,11 @@ class ExclGroup extends XFAObject {
       attributes,
       children,
     };
+
+    const assist = this.assist ? this.assist[$toHTML]() : null;
+    if (assist) {
+      html.attributes.title = assist;
+    }
 
     delete this[$extra];
 
@@ -2312,11 +2539,48 @@ class Field extends XFAObject {
     this.setProperty = new XFAObjectArray();
   }
 
+  [$isBindable]() {
+    return true;
+  }
+
   [$setValue](value) {
     _setValue(this, value);
   }
 
   [$toHTML](availableSpace) {
+    if (!this.ui) {
+      // It's allowed to not have an ui, specs say:
+      //   If the UI element contains no children or is not present,
+      //   the application chooses a default user interface for the
+      //   container, based on the type of the container's content.
+
+      this.ui = new Ui({});
+      this.ui[$globalData] = this[$globalData];
+      this[$appendChild](this.ui);
+      let node;
+
+      // The items element can have 2 element max and
+      // according to the items specs it's likely a good
+      // way to guess the correct ui type.
+      switch (this.items.children.length) {
+        case 0:
+          node = new TextEdit({});
+          this.ui.textEdit = node;
+          break;
+        case 1:
+          node = new CheckButton({});
+          this.ui.checkButton = node;
+          break;
+        case 2:
+          node = new ChoiceList({});
+          this.ui.choiceList = node;
+          break;
+      }
+      this.ui[$appendChild](node);
+    }
+
+    setTabIndex(this);
+
     if (
       !this.ui ||
       this.presence === "hidden" ||
@@ -2327,11 +2591,78 @@ class Field extends XFAObject {
       return HTMLResult.EMPTY;
     }
 
+    if (this.caption) {
+      // Maybe we already tried to layout this field with
+      // another availableSpace, so to avoid to use the cached
+      // value just delete it.
+      delete this.caption[$extra];
+    }
+
+    const caption = this.caption
+      ? this.caption[$toHTML](availableSpace).html
+      : null;
+    const savedW = this.w;
+    const savedH = this.h;
+    if (this.w === "" || this.h === "") {
+      let marginH = 0;
+      let marginV = 0;
+      if (this.margin) {
+        marginH = this.margin.leftInset + this.margin.rightInset;
+        marginV = this.margin.topInset + this.margin.bottomInset;
+      }
+
+      let width = null;
+      let height = null;
+
+      if (this.caption) {
+        const { w, h, isBroken } = this.caption[$getExtra](availableSpace);
+        // See comment in Draw::[$toHTML] to have an explanation
+        // about this line.
+        if (isBroken && this[$getSubformParent]()[$isThereMoreWidth]()) {
+          return HTMLResult.FAILURE;
+        }
+
+        width = w;
+        height = h;
+        if (this.ui.checkButton) {
+          switch (this.caption.placement) {
+            case "left":
+            case "right":
+            case "inline":
+              width += this.ui.checkButton.size;
+              break;
+            case "top":
+            case "bottom":
+              height += this.ui.checkButton.size;
+              break;
+          }
+        }
+      }
+
+      if (width && this.w === "") {
+        this.w = Math.min(
+          this.maxW <= 0 ? Infinity : this.maxW,
+          Math.max(this.minW, width + marginH)
+        );
+      }
+
+      if (height && this.h === "") {
+        this.h = Math.min(
+          this.maxH <= 0 ? Infinity : this.maxH,
+          Math.max(this.minH, height + marginV)
+        );
+      }
+    }
+
     fixDimensions(this);
 
+    setFirstUnsplittable(this);
     if (!checkDimensions(this, availableSpace)) {
+      this.w = savedW;
+      this.h = savedH;
       return HTMLResult.FAILURE;
     }
+    unsetFirstUnsplittable(this);
 
     const style = toStyle(
       this,
@@ -2363,6 +2694,11 @@ class Field extends XFAObject {
       class: classNames,
     };
 
+    if (style.margin) {
+      style.padding = style.margin;
+      delete style.margin;
+    }
+
     setAccess(this, classNames);
 
     if (this.name) {
@@ -2376,13 +2712,26 @@ class Field extends XFAObject {
       children,
     };
 
+    const assist = this.assist ? this.assist[$toHTML]() : null;
+    if (assist) {
+      html.attributes.title = assist;
+    }
+
     const borderStyle = this.border ? this.border[$toStyle]() : null;
 
     const bbox = computeBbox(this, html, availableSpace);
-    const ui = this.ui ? this.ui[$toHTML]().html : null;
+    const ui = this.ui[$toHTML]().html;
     if (!ui) {
       Object.assign(style, borderStyle);
       return HTMLResult.success(createWrapper(this, html), bbox);
+    }
+
+    if (this[$tabIndex]) {
+      if (ui.children && ui.children[0]) {
+        ui.children[0].attributes.tabindex = this[$tabIndex];
+      } else {
+        ui.attributes.tabindex = this[$tabIndex];
+      }
     }
 
     if (!ui.attributes.style) {
@@ -2407,7 +2756,7 @@ class Field extends XFAObject {
         } else {
           const htmlValue = this.value[$toHTML]().html;
           if (htmlValue !== null) {
-            value = htmlValue.value;
+            value = htmlValue.children[0].value;
           }
         }
         if (this.ui.textEdit && this.value.text && this.value.text.maxChars) {
@@ -2424,16 +2773,21 @@ class Field extends XFAObject {
       }
     }
 
-    const caption = this.caption ? this.caption[$toHTML]().html : null;
     if (!caption) {
       if (ui.attributes.class) {
         // Even if no caption this class will help to center the ui.
         ui.attributes.class.push("xfaLeft");
       }
+      this.w = savedW;
+      this.h = savedH;
+
       return HTMLResult.success(createWrapper(this, html), bbox);
     }
 
     if (this.ui.button) {
+      if (style.padding) {
+        delete style.padding;
+      }
       if (caption.name === "div") {
         caption.name = "span";
       }
@@ -2470,6 +2824,8 @@ class Field extends XFAObject {
         break;
     }
 
+    this.w = savedW;
+    this.h = savedH;
     return HTMLResult.success(createWrapper(this, html), bbox);
   }
 }
@@ -2507,7 +2863,7 @@ class Fill extends XFAObject {
     }
     if (parent instanceof Rectangle || parent instanceof Arc) {
       propName = "fill";
-      style.fill = "transparent";
+      style.fill = "white";
     }
 
     for (const name of Object.getOwnPropertyNames(this)) {
@@ -2640,6 +2996,11 @@ class Font extends XFAObject {
     this.fill = null;
   }
 
+  [$clean](builder) {
+    super[$clean](builder);
+    this[$globalData].usedTypefaces.add(this.typeface);
+  }
+
   [$toStyle]() {
     const style = toStyle(this, "fill");
     const color = style.color;
@@ -2685,11 +3046,7 @@ class Font extends XFAObject {
     // TODO: overlinePeriod
 
     style.fontStyle = this.posture;
-
-    const fontSize = measureToString(0.99 * this.size);
-    if (fontSize !== "10px") {
-      style.fontSize = fontSize;
-    }
+    style.fontSize = measureToString(0.99 * this.size);
 
     setFontFamily(this, this[$globalData].fontFinder, style);
 
@@ -2792,29 +3149,60 @@ class Image extends StringObject {
   }
 
   [$toHTML]() {
-    if (this.href || !this[$content]) {
-      // TODO: href can be a Name referring to an internal stream
-      // containing a picture.
+    let buffer =
+      this[$globalData].images && this[$globalData].images.get(this.href);
+    if (!buffer && (this.href || !this[$content])) {
       // In general, we don't get remote data and use what we have
       // in the pdf itself, so no picture for non null href.
       return HTMLResult.EMPTY;
     }
 
-    // TODO: Firefox doesn't support natively tiff (and tif) format.
-    if (this.transferEncoding === "base64") {
-      const buffer = stringToBytes(atob(this[$content]));
-      const blob = new Blob([buffer], { type: this.contentType });
-      return HTMLResult.success({
-        name: "img",
-        attributes: {
-          class: ["xfaImage"],
-          style: {},
-          src: URL.createObjectURL(blob),
-        },
-      });
+    if (!buffer && this.transferEncoding === "base64") {
+      buffer = stringToBytes(atob(this[$content]));
     }
 
-    return HTMLResult.EMPTY;
+    if (!buffer) {
+      return HTMLResult.EMPTY;
+    }
+
+    // TODO: Firefox doesn't support natively tiff (and tif) format.
+    const blob = new Blob([buffer], { type: this.contentType });
+    let style;
+    switch (this.aspect) {
+      case "fit":
+      case "actual":
+        // TODO: check what to do with actual.
+        // Normally we should return {auto, auto} for it but
+        // it implies some wrong rendering (see xfa_bug1716816.pdf).
+        break;
+      case "height":
+        style = {
+          height: "100%",
+          objectFit: "fill",
+        };
+        break;
+      case "none":
+        style = {
+          width: "100%",
+          height: "100%",
+          objectFit: "fill",
+        };
+        break;
+      case "width":
+        style = {
+          width: "100%",
+          objectFit: "fill",
+        };
+        break;
+    }
+    return HTMLResult.success({
+      name: "img",
+      attributes: {
+        class: ["xfaImage"],
+        style,
+        src: URL.createObjectURL(blob),
+      },
+    });
   }
 }
 
@@ -2906,15 +3294,6 @@ class Items extends XFAObject {
     this.time = new XFAObjectArray();
   }
 
-  [$hasItem](value) {
-    return (
-      this.hasOwnProperty(value[$nodeName]) &&
-      this[value[$nodeName]].children.some(
-        node => node[$content] === value[$content]
-      )
-    );
-  }
-
   [$toHTML]() {
     const output = [];
     for (const child of this[$getChildren]()) {
@@ -2980,8 +3359,7 @@ class Line extends XFAObject {
     const edge = this.edge ? this.edge : new Edge({});
     const edgeStyle = edge[$toStyle]();
     const style = Object.create(null);
-    const thickness =
-      edge.presence === "visible" ? Math.round(edge.thickness) : 0;
+    const thickness = edge.presence === "visible" ? edge.thickness : 0;
     style.strokeWidth = measureToString(thickness);
     style.stroke = edgeStyle.color;
     let x1, y1, x2, y2;
@@ -3014,7 +3392,7 @@ class Line extends XFAObject {
       },
     };
 
-    return HTMLResult.success({
+    const svg = {
       name: "svg",
       children: [line],
       attributes: {
@@ -3022,10 +3400,27 @@ class Line extends XFAObject {
         width,
         height,
         style: {
-          position: "absolute",
+          overflow: "visible",
         },
       },
-    });
+    };
+
+    if (hasMargin(parent)) {
+      return HTMLResult.success({
+        name: "div",
+        attributes: {
+          style: {
+            display: "inline",
+            width: "100%",
+            height: "100%",
+          },
+        },
+        children: [svg],
+      });
+    }
+
+    svg.attributes.style.position = "absolute";
+    return HTMLResult.success(svg);
   }
 }
 
@@ -3182,11 +3577,13 @@ class NumericEdit extends XFAObject {
   [$toHTML](availableSpace) {
     // TODO: incomplete.
     const style = toStyle(this, "border", "font", "margin");
+    const field = this[$getParent]()[$getParent]();
     const html = {
       name: "input",
       attributes: {
         type: "text",
-        fieldId: this[$getParent]()[$getParent]()[$uid],
+        fieldId: field[$uid],
+        dataId: (field[$data] && field[$data][$uid]) || field[$uid],
         class: ["xfaTextfield"],
         style,
       },
@@ -3257,6 +3654,24 @@ class Overflow extends XFAObject {
     this.trailer = attributes.trailer || "";
     this.use = attributes.use || "";
     this.usehref = attributes.usehref || "";
+  }
+
+  [$getExtra]() {
+    if (!this[$extra]) {
+      const parent = this[$getParent]();
+      const root = this[$getTemplateRoot]();
+      const target = root[$searchNode](this.target, parent);
+      const leader = root[$searchNode](this.leader, parent);
+      const trailer = root[$searchNode](this.trailer, parent);
+      this[$extra] = {
+        target: (target && target[0]) || null,
+        leader: (leader && leader[0]) || null,
+        trailer: (trailer && trailer[0]) || null,
+        addLeader: false,
+        addTrailer: false,
+      };
+    }
+    return this[$extra];
   }
 }
 
@@ -3395,8 +3810,10 @@ class PageArea extends XFAObject {
       name: "div",
       children,
       attributes: {
+        class: ["xfaPage"],
         id: this[$uid],
         style,
+        xfaName: this.name,
       },
     });
   }
@@ -3571,16 +3988,16 @@ class Para extends XFAObject {
   [$toStyle]() {
     const style = toStyle(this, "hAlign");
     if (this.marginLeft !== "") {
-      style.marginLeft = measureToString(this.marginLeft);
+      style.paddingLeft = measureToString(this.marginLeft);
     }
     if (this.marginRight !== "") {
-      style.marginRight = measureToString(this.marginRight);
+      style.paddingight = measureToString(this.marginRight);
     }
     if (this.spaceAbove !== "") {
-      style.marginTop = measureToString(this.spaceAbove);
+      style.paddingTop = measureToString(this.spaceAbove);
     }
     if (this.spaceBelow !== "") {
-      style.marginBottom = measureToString(this.spaceBelow);
+      style.paddingBottom = measureToString(this.spaceBelow);
     }
     if (this.textIndent !== "") {
       style.textIndent = measureToString(this.textIndent);
@@ -3813,7 +4230,7 @@ class Radial extends XFAObject {
       this.type === "toEdge"
         ? `${startColor},${endColor}`
         : `${endColor},${startColor}`;
-    return `radial-gradient(circle to center, ${colors})`;
+    return `radial-gradient(circle at center, ${colors})`;
   }
 }
 
@@ -3856,13 +4273,13 @@ class Rectangle extends XFAObject {
       : new Edge({});
     const edgeStyle = edge[$toStyle]();
     const style = Object.create(null);
-    if (this.fill) {
+    if (this.fill && this.fill.presence === "visible") {
       Object.assign(style, this.fill[$toStyle]());
     } else {
       style.fill = "transparent";
     }
     style.strokeWidth = measureToString(
-      edge.presence === "visible" ? 2 * edge.thickness : 0
+      edge.presence === "visible" ? edge.thickness : 0
     );
     style.stroke = edgeStyle.color;
 
@@ -3885,18 +4302,36 @@ class Rectangle extends XFAObject {
       },
     };
 
-    return HTMLResult.success({
+    const svg = {
       name: "svg",
       children: [rect],
       attributes: {
         xmlns: SVG_NS,
         style: {
-          position: "absolute",
+          overflow: "visible",
         },
         width: "100%",
         height: "100%",
       },
-    });
+    };
+
+    const parent = this[$getParent]()[$getParent]();
+    if (hasMargin(parent)) {
+      return HTMLResult.success({
+        name: "div",
+        attributes: {
+          style: {
+            display: "inline",
+            width: "100%",
+            height: "100%",
+          },
+        },
+        children: [svg],
+      });
+    }
+
+    svg.attributes.style.position = "absolute";
+    return HTMLResult.success(svg);
   }
 }
 
@@ -4151,6 +4586,27 @@ class Subform extends XFAObject {
     this.subformSet = new XFAObjectArray();
   }
 
+  [$getSubformParent]() {
+    const parent = this[$getParent]();
+    if (parent instanceof SubformSet) {
+      return parent[$getSubformParent]();
+    }
+    return parent;
+  }
+
+  [$isBindable]() {
+    return true;
+  }
+
+  [$isThereMoreWidth]() {
+    return (
+      (this.layout.endsWith("-tb") &&
+        this[$extra].attempt === 0 &&
+        this[$extra].numberInLine > 0) ||
+      this[$getParent]()[$isThereMoreWidth]()
+    );
+  }
+
   *[$getContainedChildren]() {
     // This function is overriden in order to fake that subforms under
     // this set are in fact under parent subform.
@@ -4169,37 +4625,94 @@ class Subform extends XFAObject {
     return getAvailableSpace(this);
   }
 
-  [$isSplittable](x) {
+  [$isSplittable]() {
     // We cannot cache the result here because the contentArea
     // can change.
-    const root = this[$getTemplateRoot]();
-    const contentArea = root[$extra].currentContentArea;
-    if (contentArea && Math.max(this.minH, this.h || 0) >= contentArea.h) {
-      return true;
+    const parent = this[$getSubformParent]();
+    if (!parent[$isSplittable]()) {
+      return false;
     }
 
-    if (this.layout === "position") {
+    const contentArea = this[$getTemplateRoot]()[$extra].currentContentArea;
+
+    if (this.overflow && this.overflow[$getExtra]().target === contentArea) {
+      return false;
+    }
+
+    if (this[$extra]._isSplittable !== undefined) {
+      return this[$extra]._isSplittable;
+    }
+
+    if (this.layout === "position" || this.layout.includes("row")) {
+      this[$extra]._isSplittable = false;
       return false;
     }
 
     if (this.keep && this.keep.intact !== "none") {
+      this[$extra]._isSplittable = false;
       return false;
     }
 
-    const parentLayout = this[$getParent]().layout;
-    if (parentLayout && parentLayout.includes("row")) {
+    if (
+      parent.layout &&
+      parent.layout.endsWith("-tb") &&
+      parent[$extra].numberInLine !== 0
+    ) {
+      // If parent can fit in w=100 and there's already an element which takes
+      // 90 then we've 10 for this element. Suppose this element has a tb layout
+      // and 5 elements have a width of 7 and the 6th has a width of 20:
+      // then this element (and all its content) must move on the next line.
+      // If this element is splittable then the first 5 children will stay
+      // at the end of the line: we don't want that.
       return false;
     }
 
-    if (this.overflow && this.overflow.target) {
-      const target = root[$searchNode](this.overflow.target, this);
-      return target && target[0] === contentArea;
-    }
+    this[$extra]._isSplittable = true;
 
     return true;
   }
 
   [$toHTML](availableSpace) {
+    if (this.break) {
+      // break element is deprecated so plug it on one of its replacement
+      // breakBefore or breakAfter.
+      if (this.break.after !== "auto" || this.break.afterTarget !== "") {
+        const node = new BreakAfter({
+          targetType: this.break.after,
+          target: this.break.afterTarget,
+          startNew: this.break.startNew.toString(),
+        });
+        node[$globalData] = this[$globalData];
+        this[$appendChild](node);
+        this.breakAfter.push(node);
+      }
+
+      if (this.break.before !== "auto" || this.break.beforeTarget !== "") {
+        const node = new BreakBefore({
+          targetType: this.break.before,
+          target: this.break.beforeTarget,
+          startNew: this.break.startNew.toString(),
+        });
+        node[$globalData] = this[$globalData];
+        this[$appendChild](node);
+        this.breakBefore.push(node);
+      }
+
+      if (this.break.overflowTarget !== "") {
+        const node = new Overflow({
+          target: this.break.overflowTarget,
+          leader: this.break.overflowLeader,
+          trailer: this.break.overflowTrailer,
+        });
+        node[$globalData] = this[$globalData];
+        this[$appendChild](node);
+        this.overflow.push(node);
+      }
+
+      this[$removeChild](this.break);
+      this.break = null;
+    }
+
     if (this.presence === "hidden" || this.presence === "inactive") {
       return HTMLResult.EMPTY;
     }
@@ -4217,9 +4730,7 @@ class Subform extends XFAObject {
 
     if (this.breakBefore.children.length >= 1) {
       const breakBefore = this.breakBefore.children[0];
-      if (!breakBefore[$extra]) {
-        // Set $extra to true to consume it.
-        breakBefore[$extra] = true;
+      if (handleBreak(breakBefore)) {
         return HTMLResult.breakNode(breakBefore);
       }
     }
@@ -4244,14 +4755,37 @@ class Subform extends XFAObject {
 
     Object.assign(this[$extra], {
       children,
+      line: null,
       attributes,
       attempt: 0,
-      availableSpace,
+      numberInLine: 0,
+      availableSpace: {
+        width: Math.min(this.w || Infinity, availableSpace.width),
+        height: Math.min(this.h || Infinity, availableSpace.height),
+      },
       width: 0,
       height: 0,
       prevHeight: 0,
       currentWidth: 0,
     });
+
+    const root = this[$getTemplateRoot]();
+    const currentContentArea = root[$extra].currentContentArea;
+    const savedNoLayoutFailure = root[$extra].noLayoutFailure;
+
+    if (this.overflow) {
+      // In case of overflow in the current content area,
+      // elements must be kept in this subform so it implies
+      // to have no errors on layout failures.
+      root[$extra].noLayoutFailure =
+        root[$extra].noLayoutFailure ||
+        this.overflow[$getExtra]().target === currentContentArea;
+    }
+
+    const isSplittable = this[$isSplittable]();
+    if (!isSplittable) {
+      setFirstUnsplittable(this);
+    }
 
     if (!checkDimensions(this, availableSpace)) {
       return HTMLResult.FAILURE;
@@ -4297,17 +4831,23 @@ class Subform extends XFAObject {
       attributes.xfaName = this.name;
     }
 
-    const isSplittable = this[$isSplittable]();
+    if (this.overflow) {
+      const overflowExtra = this.overflow[$getExtra]();
+      if (overflowExtra.addLeader) {
+        overflowExtra.addLeader = false;
+        handleOverflow(this, overflowExtra.leader, availableSpace);
+      }
+    }
 
-    // If the container overflows into itself we add an extra
-    // layout step to accept finally the element which caused
-    // the overflow.
-    let maxRun =
-      this.layout === "lr-tb" || this.layout === "rl-tb"
-        ? MAX_ATTEMPTS_FOR_LRTB_LAYOUT
-        : 1;
-    maxRun += !isSplittable && this.layout !== "position" ? 1 : 0;
+    const isLrTb = this.layout === "lr-tb" || this.layout === "rl-tb";
+    const maxRun = isLrTb ? MAX_ATTEMPTS_FOR_LRTB_LAYOUT : 1;
     for (; this[$extra].attempt < maxRun; this[$extra].attempt++) {
+      if (isLrTb && this[$extra].attempt === MAX_ATTEMPTS_FOR_LRTB_LAYOUT - 1) {
+        // If the layout is lr-tb then having attempt equals to
+        // MAX_ATTEMPTS_FOR_LRTB_LAYOUT-1 means that we're trying to layout
+        // on the next line so this on is empty.
+        this[$extra].numberInLine = 0;
+      }
       const result = this[$childrenToHTML]({
         filter,
         include: true,
@@ -4318,7 +4858,29 @@ class Subform extends XFAObject {
       if (result.isBreak()) {
         return result;
       }
+      if (
+        isLrTb &&
+        this[$extra].attempt === 0 &&
+        this[$extra].numberInLine === 0 &&
+        !root[$extra].noLayoutFailure
+      ) {
+        // We're failing to put the first element on the line so no
+        // need to test on the next line.
+        // The goal is not only to avoid some useless checks but to avoid
+        // bugs too: if a descendant managed to put a node and failed
+        // on the next one, going to the next step here will imply to
+        // visit the descendant again, clear [$extra].children and restart
+        // on the failing node, consequently the first node just disappears
+        // because it has never been flushed.
+        this[$extra].attempt = maxRun;
+        break;
+      }
     }
+
+    if (!isSplittable) {
+      unsetFirstUnsplittable(this);
+    }
+    root[$extra].noLayoutFailure = savedNoLayoutFailure;
 
     if (this[$extra].attempt === maxRun) {
       if (this.overflow) {
@@ -4331,6 +4893,14 @@ class Subform extends XFAObject {
         delete this[$extra];
       }
       return HTMLResult.FAILURE;
+    }
+
+    if (this.overflow) {
+      const overflowExtra = this.overflow[$getExtra]();
+      if (overflowExtra.addTrailer) {
+        overflowExtra.addTrailer = false;
+        handleOverflow(this, overflowExtra.trailer, availableSpace);
+      }
     }
 
     let marginH = 0;
@@ -4357,12 +4927,19 @@ class Subform extends XFAObject {
       children,
     };
 
+    const assist = this.assist ? this.assist[$toHTML]() : null;
+    if (assist) {
+      html.attributes.title = assist;
+    }
+
     const result = HTMLResult.success(createWrapper(this, html), bbox);
 
     if (this.breakAfter.children.length >= 1) {
       const breakAfter = this.breakAfter.children[0];
-      this[$extra].afterBreakAfter = result;
-      return HTMLResult.breakNode(breakAfter);
+      if (handleBreak(breakAfter)) {
+        this[$extra].afterBreakAfter = result;
+        return HTMLResult.breakNode(breakAfter);
+      }
     }
 
     delete this[$extra];
@@ -4515,6 +5092,11 @@ class Template extends XFAObject {
     if (this.subform.children.length >= 2) {
       warn("XFA - Several subforms in template node: please file a bug.");
     }
+    this[$tabIndex] = 1000;
+  }
+
+  [$isSplittable]() {
+    return true;
   }
 
   [$searchNode](expr, container) {
@@ -4534,6 +5116,10 @@ class Template extends XFAObject {
     }
     this[$extra] = {
       overflowNode: null,
+      firstUnsplittable: null,
+      currentContentArea: null,
+      currentPageArea: null,
+      noLayoutFailure: false,
       pageNumber: 1,
       pagePosition: "first",
       oddOrEven: "odd",
@@ -4605,9 +5191,11 @@ class Template extends XFAObject {
     let trailer = null;
     let hasSomething = true;
     let hasSomethingCounter = 0;
+    let startIndex = 0;
 
     while (true) {
       if (!hasSomething) {
+        mainHtml.children.pop();
         // Nothing has been added in the previous page
         if (++hasSomethingCounter === MAX_EMPTY_PAGES) {
           warn("XFA - Something goes wrong: please file a bug.");
@@ -4618,15 +5206,18 @@ class Template extends XFAObject {
       }
 
       targetPageArea = null;
+      this[$extra].currentPageArea = pageArea;
       const page = pageArea[$toHTML]().html;
       mainHtml.children.push(page);
 
       if (leader) {
+        this[$extra].noLayoutFailure = true;
         page.children.push(leader[$toHTML](pageArea[$extra].space).html);
         leader = null;
       }
 
       if (trailer) {
+        this[$extra].noLayoutFailure = true;
         page.children.push(trailer[$toHTML](pageArea[$extra].space).html);
         trailer = null;
       }
@@ -4637,6 +5228,8 @@ class Template extends XFAObject {
       );
 
       hasSomething = false;
+      this[$extra].firstUnsplittable = null;
+      this[$extra].noLayoutFailure = false;
 
       const flush = index => {
         const html = root[$flushHTML]();
@@ -4647,9 +5240,10 @@ class Template extends XFAObject {
         }
       };
 
-      for (let i = 0, ii = contentAreas.length; i < ii; i++) {
+      for (let i = startIndex, ii = contentAreas.length; i < ii; i++) {
         const contentArea = (this[$extra].currentContentArea = contentAreas[i]);
         const space = { width: contentArea.w, height: contentArea.h };
+        startIndex = 0;
 
         if (leader) {
           htmlContentAreas[i].children.push(leader[$toHTML](space).html);
@@ -4676,13 +5270,11 @@ class Template extends XFAObject {
 
         if (html.isBreak()) {
           const node = html.breakNode;
+          flush(i);
 
           if (node.targetType === "auto") {
-            flush(i);
             continue;
           }
-
-          const startNew = node.startNew === 1;
 
           if (node.leader) {
             leader = this[$searchNode](node.leader, node[$getParent]());
@@ -4694,41 +5286,18 @@ class Template extends XFAObject {
             trailer = trailer ? trailer[0] : null;
           }
 
-          let target = null;
-          if (node.target) {
-            target = this[$searchNode](node.target, node[$getParent]());
-            target = target ? target[0] : target;
-          }
-
           if (node.targetType === "pageArea") {
-            if (!(target instanceof PageArea)) {
-              target = null;
-            }
-
-            if (startNew) {
-              targetPageArea = target || pageArea;
-              flush(i);
-              i = Infinity;
-            } else if (target && target !== pageArea) {
-              targetPageArea = target;
-              flush(i);
-              i = Infinity;
-            } else {
-              i--;
-            }
-          } else if (node.targetType === "contentArea") {
-            if (!(target instanceof ContentArea)) {
-              target = null;
-            }
-
-            const index = contentAreas.findIndex(e => e === target);
-            if (index !== -1) {
-              flush(i);
-              i = index - 1;
-            } else {
-              i--;
-            }
+            targetPageArea = node[$extra].target;
+            i = Infinity;
+          } else if (!node[$extra].target) {
+            // We stay on the same page.
+            i = node[$extra].index;
+          } else {
+            targetPageArea = node[$extra].target;
+            startIndex = node[$extra].index + 1;
+            i = Infinity;
           }
+
           continue;
         }
 
@@ -4736,35 +5305,28 @@ class Template extends XFAObject {
           const node = this[$extra].overflowNode;
           this[$extra].overflowNode = null;
 
+          const overflowExtra = node[$getExtra]();
+          const target = overflowExtra.target;
+          overflowExtra.addLeader = overflowExtra.leader !== null;
+          overflowExtra.addTrailer = overflowExtra.trailer !== null;
+
           flush(i);
 
-          if (node.leader) {
-            leader = this[$searchNode](node.leader, node[$getParent]());
-            leader = leader ? leader[0] : null;
-          }
-
-          if (node.trailer) {
-            trailer = this[$searchNode](node.trailer, node[$getParent]());
-            trailer = trailer ? trailer[0] : null;
-          }
-
-          let target = null;
-          if (node.target) {
-            target = this[$searchNode](node.target, node[$getParent]());
-            target = target ? target[0] : target;
-          }
-
+          i = Infinity;
           if (target instanceof PageArea) {
             // We must stop the contentAreas filling and go to the next page.
             targetPageArea = target;
-            i = Infinity;
-            continue;
           } else if (target instanceof ContentArea) {
             const index = contentAreas.findIndex(e => e === target);
             if (index !== -1) {
+              // In the next loop iteration `i` will be incremented, note the
+              // `continue` just below, hence we need to subtract one here.
               i = index - 1;
             } else {
-              i--;
+              targetPageArea = target[$getParent]();
+              startIndex = targetPageArea.contentArea.children.findIndex(
+                e => e === target
+              );
             }
           }
           continue;
@@ -4924,11 +5486,13 @@ class TextEdit extends XFAObject {
     // TODO: incomplete.
     const style = toStyle(this, "border", "font", "margin");
     let html;
+    const field = this[$getParent]()[$getParent]();
     if (this.multiLine === 1) {
       html = {
         name: "textarea",
         attributes: {
-          fieldId: this[$getParent]()[$getParent]()[$uid],
+          dataId: (field[$data] && field[$data][$uid]) || field[$uid],
+          fieldId: field[$uid],
           class: ["xfaTextfield"],
           style,
         },
@@ -4938,7 +5502,8 @@ class TextEdit extends XFAObject {
         name: "input",
         attributes: {
           type: "text",
-          fieldId: this[$getParent]()[$getParent]()[$uid],
+          dataId: (field[$data] && field[$data][$uid]) || field[$uid],
+          fieldId: field[$uid],
           class: ["xfaTextfield"],
           style,
         },

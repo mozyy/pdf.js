@@ -15,7 +15,7 @@
 
 import {
   $appendChild,
-  $global,
+  $isNsAgnostic,
   $namespaceId,
   $nodeName,
   $onChild,
@@ -29,6 +29,10 @@ const DATASETS_NS_ID = NamespaceIds.datasets.id;
 class Data extends XmlObject {
   constructor(attributes) {
     super(DATASETS_NS_ID, "data", attributes);
+  }
+
+  [$isNsAgnostic]() {
+    return true;
   }
 }
 
@@ -47,8 +51,6 @@ class Datasets extends XFAObject {
         child[$namespaceId] === NamespaceIds.signature.id)
     ) {
       this[name] = child;
-    } else {
-      child[$global] = true;
     }
     this[$appendChild](child);
   }

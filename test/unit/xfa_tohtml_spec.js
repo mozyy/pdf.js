@@ -44,6 +44,7 @@ describe("XFAFactory", function () {
           <contentArea x="123pt" w="456pt" h="789pt"/>
           <medium stock="default" short="456pt" long="789pt"/>
           <draw y="1pt" w="11pt" h="22pt" rotate="90" x="2pt">
+            <assist><toolTip>A tooltip !!</toolTip></assist>
             <font size="7pt" typeface="FooBar" baselineShift="2pt">
               <fill>
                 <color value="12,23,34"/>
@@ -56,12 +57,16 @@ describe("XFAFactory", function () {
           </draw>
         </pageArea>
       </pageSet>
-      <subform name="first">
-      </subform>
       <subform name="second">
         <breakBefore targetType="pageArea" startNew="1"/>
         <subform>
           <draw w="1pt" h="1pt"><value><text>foo</text></value></draw>
+        </subform>
+      </subform>
+      <subform name="third">
+        <breakBefore targetType="pageArea" startNew="1"/>
+        <subform>
+          <draw w="1pt" h="1pt"><value><text>bar</text></value></draw>
         </subform>
       </subform>
     </subform>
@@ -92,7 +97,6 @@ describe("XFAFactory", function () {
         width: "456px",
         left: "123px",
         top: "0px",
-        position: "absolute",
       });
 
       const wrapper = page1.children[0];
@@ -115,6 +119,7 @@ describe("XFAFactory", function () {
         "xfaFont",
         "xfaWrapped",
       ]);
+      expect(draw.attributes.title).toEqual("A tooltip !!");
       expect(draw.attributes.style).toEqual({
         color: "#0c1722",
         fontFamily: '"FooBar"',
@@ -123,7 +128,7 @@ describe("XFAFactory", function () {
         fontStyle: "normal",
         fontWeight: "normal",
         fontSize: "6.93px",
-        margin: "1px 4px 2px 3px",
+        padding: "1px 4px 2px 3px",
         verticalAlign: "2px",
       });
 

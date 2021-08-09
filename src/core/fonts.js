@@ -257,10 +257,28 @@ function int32(b0, b1, b2, b3) {
 }
 
 function string16(value) {
+  if (
+    typeof PDFJSDev === "undefined" ||
+    PDFJSDev.test("!PRODUCTION || TESTING")
+  ) {
+    assert(
+      typeof value === "number" && Math.abs(value) < 2 ** 16,
+      `string16: Unexpected input "${value}".`
+    );
+  }
   return String.fromCharCode((value >> 8) & 0xff, value & 0xff);
 }
 
 function safeString16(value) {
+  if (
+    typeof PDFJSDev === "undefined" ||
+    PDFJSDev.test("!PRODUCTION || TESTING")
+  ) {
+    assert(
+      typeof value === "number" && !Number.isNaN(value),
+      `safeString16: Unexpected input "${value}".`
+    );
+  }
   // clamp value to the 16-bit int range
   if (value > 0x7fff) {
     value = 0x7fff;
@@ -751,7 +769,7 @@ function createPostTable(properties) {
     string32(angle) + // italicAngle
     "\x00\x00" + // underlinePosition
     "\x00\x00" + // underlineThickness
-    string32(properties.fixedPitch) + // isFixedPitch
+    string32(properties.fixedPitch ? 1 : 0) + // isFixedPitch
     "\x00\x00\x00\x00" + // minMemType42
     "\x00\x00\x00\x00" + // maxMemType42
     "\x00\x00\x00\x00" + // minMemType1
@@ -1372,7 +1390,18 @@ class Font {
           }
         } else if (isSymbolicFont && platformId === 3 && encodingId === 0) {
           useTable = true;
-          canBreak = true;
+
+          let correctlySorted = true;
+          if (i < numTables - 1) {
+            const nextBytes = file.peekBytes(2),
+              nextPlatformId = int16(nextBytes[0], nextBytes[1]);
+            if (nextPlatformId < platformId) {
+              correctlySorted = false;
+            }
+          }
+          if (correctlySorted) {
+            canBreak = true;
+          }
         }
 
         if (useTable) {
@@ -1529,7 +1558,14 @@ class Font {
       };
     }
 
-    function sanitizeMetrics(file, header, metrics, numGlyphs, dupFirstEntry) {
+    function sanitizeMetrics(
+      file,
+      header,
+      metrics,
+      headTable,
+      numGlyphs,
+      dupFirstEntry
+    ) {
       if (!header) {
         if (metrics) {
           metrics.data = null;
@@ -1548,19 +1584,24 @@ class Font {
       file.pos += 2; // max_extent
       file.pos += 2; // caret_slope_rise
       file.pos += 2; // caret_slope_run
-      file.pos += 2; // caret_offset
+      const caretOffset = file.getUint16();
       file.pos += 8; // reserved
       file.pos += 2; // format
       let numOfMetrics = file.getUint16();
 
+      if (caretOffset !== 0) {
+        const macStyle = int16(headTable.data[44], headTable.data[45]);
+        if (!(macStyle & 2)) {
+          // Suppress OTS warnings about the `caretOffset` in the hhea-table.
+          header.data[22] = 0;
+          header.data[23] = 0;
+        }
+      }
+
       if (numOfMetrics > numGlyphs) {
         info(
-          "The numOfMetrics (" +
-            numOfMetrics +
-            ") should not be " +
-            "greater than the numGlyphs (" +
-            numGlyphs +
-            ")"
+          `The numOfMetrics (${numOfMetrics}) should not be ` +
+            `greater than the numGlyphs (${numGlyphs}).`
         );
         // Reduce numOfMetrics if it is greater than numGlyphs
         numOfMetrics = numGlyphs;
@@ -2446,6 +2487,7 @@ class Font {
       font,
       tables.hhea,
       tables.hmtx,
+      tables.head,
       numGlyphsOut,
       dupFirstEntry
     );
@@ -2506,7 +2548,12 @@ class Font {
     this.ascent = metricsOverride.ascent / metricsOverride.unitsPerEm;
     this.descent = metricsOverride.descent / metricsOverride.unitsPerEm;
     this.lineGap = metricsOverride.lineGap / metricsOverride.unitsPerEm;
-    this.lineHeight = this.ascent - this.descent + this.lineGap;
+
+    if (this.cssFontInfo && this.cssFontInfo.lineHeight) {
+      this.lineHeight = this.cssFontInfo.lineHeight;
+    } else {
+      this.lineHeight = this.ascent - this.descent + this.lineGap;
+    }
 
     // The 'post' table has glyphs names.
     if (tables.post) {

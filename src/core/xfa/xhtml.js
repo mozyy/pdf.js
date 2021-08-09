@@ -16,6 +16,7 @@
 import {
   $acceptWhitespace,
   $childrenToHTML,
+  $clean,
   $content,
   $extra,
   $getChildren,
@@ -29,7 +30,7 @@ import {
 } from "./xfa_object.js";
 import { $buildXFAObject, NamespaceIds } from "./namespaces.js";
 import { fixTextIndent, measureToString, setFontFamily } from "./html_utils.js";
-import { getMeasurement, HTMLResult } from "./utils.js";
+import { getMeasurement, HTMLResult, stripQuotes } from "./utils.js";
 
 const XHTML_NS_ID = NamespaceIds.xhtml.id;
 
@@ -83,7 +84,13 @@ const StyleMapping = new Map([
   ],
   ["xfa-spacerun", ""],
   ["xfa-tab-stops", ""],
-  ["font-size", value => measureToString(getMeasurement(value))],
+  [
+    "font-size",
+    (value, original) => {
+      value = original.fontSize = getMeasurement(value);
+      return measureToString(0.99 * value);
+    },
+  ],
   ["letter-spacing", value => measureToString(getMeasurement(value))],
   ["line-height", value => measureToString(getMeasurement(value))],
   ["margin", value => measureToString(getMeasurement(value))],
@@ -103,6 +110,7 @@ function mapStyle(styleStr, fontFinder) {
   if (!styleStr) {
     return style;
   }
+  const original = Object.create(null);
   for (const [key, value] of styleStr.split(";").map(s => s.split(":", 2))) {
     const mapping = StyleMapping.get(key);
     if (mapping === "") {
@@ -113,7 +121,7 @@ function mapStyle(styleStr, fontFinder) {
       if (typeof mapping === "string") {
         newValue = mapping;
       } else {
-        newValue = mapping(value, fontFinder);
+        newValue = mapping(value, original);
       }
     }
     if (key.endsWith("scale")) {
@@ -134,6 +142,7 @@ function mapStyle(styleStr, fontFinder) {
         typeface: style.fontFamily,
         weight: style.fontWeight || "normal",
         posture: style.fontStyle || "normal",
+        size: original.fontSize || 0,
       },
       fontFinder,
       style
@@ -144,18 +153,23 @@ function mapStyle(styleStr, fontFinder) {
   return style;
 }
 
-function checkStyle(style) {
-  if (!style) {
+function checkStyle(node) {
+  if (!node.style) {
     return "";
   }
 
   // Remove any non-allowed keys.
-  return style
+  return node.style
     .trim()
     .split(/\s*;\s*/)
     .filter(s => !!s)
     .map(s => s.split(/\s*:\s*/, 2))
-    .filter(([key]) => VALID_STYLES.has(key))
+    .filter(([key, value]) => {
+      if (key === "font-family") {
+        node[$globalData].usedTypefaces.add(value);
+      }
+      return VALID_STYLES.has(key);
+    })
     .map(kv => kv.join(":"))
     .join(";");
 }
@@ -165,7 +179,12 @@ const NoWhites = new Set(["body", "html"]);
 class XhtmlObject extends XmlObject {
   constructor(attributes, name) {
     super(XHTML_NS_ID, name);
-    this.style = checkStyle(attributes.style);
+    this.style = attributes.style || "";
+  }
+
+  [$clean](builder) {
+    super[$clean](builder);
+    this.style = checkStyle(this);
   }
 
   [$acceptWhitespace]() {
@@ -182,25 +201,81 @@ class XhtmlObject extends XmlObject {
     }
   }
 
-  [$pushGlyphs](measure) {
+  [$pushGlyphs](measure, mustPop = true) {
     const xfaFont = Object.create(null);
+    const margin = {
+      top: NaN,
+      bottom: NaN,
+      left: NaN,
+      right: NaN,
+    };
+    let lineHeight = null;
     for (const [key, value] of this.style
       .split(";")
       .map(s => s.split(":", 2))) {
-      if (!key.startsWith("font-")) {
-        continue;
-      }
-      if (key === "font-family") {
-        xfaFont.typeface = value;
-      } else if (key === "font-size") {
-        xfaFont.size = getMeasurement(value);
-      } else if (key === "font-weight") {
-        xfaFont.weight = value;
-      } else if (key === "font-style") {
-        xfaFont.posture = value;
+      switch (key) {
+        case "font-family":
+          xfaFont.typeface = stripQuotes(value);
+          break;
+        case "font-size":
+          xfaFont.size = getMeasurement(value);
+          break;
+        case "font-weight":
+          xfaFont.weight = value;
+          break;
+        case "font-style":
+          xfaFont.posture = value;
+          break;
+        case "letter-spacing":
+          xfaFont.letterSpacing = getMeasurement(value);
+          break;
+        case "margin":
+          const values = value.split(/ \t/).map(x => getMeasurement(x));
+          switch (values.length) {
+            case 1:
+              margin.top =
+                margin.bottom =
+                margin.left =
+                margin.right =
+                  values[0];
+              break;
+            case 2:
+              margin.top = margin.bottom = values[0];
+              margin.left = margin.right = values[1];
+              break;
+            case 3:
+              margin.top = values[0];
+              margin.bottom = values[2];
+              margin.left = margin.right = values[1];
+              break;
+            case 4:
+              margin.top = values[0];
+              margin.left = values[1];
+              margin.bottom = values[2];
+              margin.right = values[3];
+              break;
+          }
+          break;
+        case "margin-top":
+          margin.top = getMeasurement(value);
+          break;
+        case "margin-bottom":
+          margin.bottom = getMeasurement(value);
+          break;
+        case "margin-left":
+          margin.left = getMeasurement(value);
+          break;
+        case "margin-right":
+          margin.right = getMeasurement(value);
+          break;
+        case "line-height":
+          lineHeight = getMeasurement(value);
+          break;
       }
     }
-    measure.pushFont(xfaFont);
+
+    measure.pushData(xfaFont, margin, lineHeight);
+
     if (this[$content]) {
       measure.addString(this[$content]);
     } else {
@@ -212,7 +287,10 @@ class XhtmlObject extends XmlObject {
         child[$pushGlyphs](measure);
       }
     }
-    measure.popFont();
+
+    if (mustPop) {
+      measure.popFont();
+    }
   }
 
   [$toHTML](availableSpace) {
@@ -366,8 +444,10 @@ class P extends XhtmlObject {
   }
 
   [$pushGlyphs](measure) {
-    super[$pushGlyphs](measure);
+    super[$pushGlyphs](measure, /* mustPop = */ false);
     measure.addString("\n");
+    measure.addPara();
+    measure.popFont();
   }
 
   [$text]() {

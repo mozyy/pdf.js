@@ -1689,6 +1689,12 @@ describe("annotation", function () {
         OPS.setFillRGBColor,
         OPS.endAnnotation,
       ]);
+      expect(operatorList.argsArray[0]).toEqual([
+        "271R",
+        [0, 0, 32, 10],
+        [32, 0, 0, 10, 0, 0],
+        [1, 0, 0, 1, 0, 0],
+      ]);
       expect(operatorList.argsArray[1]).toEqual(
         new Uint8ClampedArray([26, 51, 76])
       );
@@ -2192,8 +2198,8 @@ describe("annotation", function () {
     });
 
     it("should handle checkboxes with export value", async function () {
-      buttonWidgetDict.set("V", Name.get("1"));
-      buttonWidgetDict.set("DV", Name.get("2"));
+      buttonWidgetDict.set("V", Name.get("Checked"));
+      buttonWidgetDict.set("DV", Name.get("Off"));
 
       const appearanceStatesDict = new Dict();
       const normalAppearanceDict = new Dict();
@@ -2216,15 +2222,15 @@ describe("annotation", function () {
       );
       expect(data.annotationType).toEqual(AnnotationType.WIDGET);
       expect(data.checkBox).toEqual(true);
-      expect(data.fieldValue).toEqual("1");
-      expect(data.defaultFieldValue).toEqual("2");
+      expect(data.fieldValue).toEqual("Checked");
+      expect(data.defaultFieldValue).toEqual("Off");
       expect(data.radioButton).toEqual(false);
       expect(data.exportValue).toEqual("Checked");
     });
 
     it("should handle checkboxes without export value", async function () {
-      buttonWidgetDict.set("V", Name.get("1"));
-      buttonWidgetDict.set("DV", Name.get("2"));
+      buttonWidgetDict.set("V", Name.get("Checked"));
+      buttonWidgetDict.set("DV", Name.get("Off"));
 
       const buttonWidgetRef = Ref.get(124, 0);
       const xref = new XRefMock([
@@ -2239,14 +2245,14 @@ describe("annotation", function () {
       );
       expect(data.annotationType).toEqual(AnnotationType.WIDGET);
       expect(data.checkBox).toEqual(true);
-      expect(data.fieldValue).toEqual("1");
-      expect(data.defaultFieldValue).toEqual("2");
+      expect(data.fieldValue).toEqual("Checked");
+      expect(data.defaultFieldValue).toEqual("Off");
       expect(data.radioButton).toEqual(false);
     });
 
     it("should handle checkboxes without /Off appearance", async function () {
-      buttonWidgetDict.set("V", Name.get("1"));
-      buttonWidgetDict.set("DV", Name.get("2"));
+      buttonWidgetDict.set("V", Name.get("Checked"));
+      buttonWidgetDict.set("DV", Name.get("Off"));
 
       const appearanceStatesDict = new Dict();
       const normalAppearanceDict = new Dict();
@@ -2268,8 +2274,8 @@ describe("annotation", function () {
       );
       expect(data.annotationType).toEqual(AnnotationType.WIDGET);
       expect(data.checkBox).toEqual(true);
-      expect(data.fieldValue).toEqual("1");
-      expect(data.defaultFieldValue).toEqual("2");
+      expect(data.fieldValue).toEqual("Checked");
+      expect(data.defaultFieldValue).toEqual("Off");
       expect(data.radioButton).toEqual(false);
       expect(data.exportValue).toEqual("Checked");
     });
@@ -2324,6 +2330,12 @@ describe("annotation", function () {
         OPS.showText,
         OPS.endAnnotation,
       ]);
+      expect(operatorList.argsArray[0]).toEqual([
+        "124R",
+        [0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0],
+        [1, 0, 0, 1, 0, 0],
+      ]);
       expect(operatorList.argsArray[3][0][0].unicode).toEqual("4");
     });
 
@@ -2375,6 +2387,12 @@ describe("annotation", function () {
         OPS.setFillRGBColor,
         OPS.endAnnotation,
       ]);
+      expect(operatorList.argsArray[0]).toEqual([
+        "124R",
+        [0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0],
+        [1, 0, 0, 1, 0, 0],
+      ]);
       expect(operatorList.argsArray[1]).toEqual(
         new Uint8ClampedArray([26, 51, 76])
       );
@@ -2392,6 +2410,12 @@ describe("annotation", function () {
         OPS.beginAnnotation,
         OPS.setFillRGBColor,
         OPS.endAnnotation,
+      ]);
+      expect(operatorList.argsArray[0]).toEqual([
+        "124R",
+        [0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0],
+        [1, 0, 0, 1, 0, 0],
       ]);
       expect(operatorList.argsArray[1]).toEqual(
         new Uint8ClampedArray([76, 51, 26])
@@ -2449,6 +2473,12 @@ describe("annotation", function () {
           OPS.setFillRGBColor,
           OPS.endAnnotation,
         ]);
+        expect(operatorList.argsArray[0]).toEqual([
+          "1249R",
+          [0, 0, 0, 0],
+          [0, 0, 0, 0, 0, 0],
+          [1, 0, 0, 1, 0, 0],
+        ]);
         expect(operatorList.argsArray[1]).toEqual(
           new Uint8ClampedArray([26, 51, 76])
         );
@@ -2502,6 +2532,12 @@ describe("annotation", function () {
         OPS.beginAnnotation,
         OPS.setFillRGBColor,
         OPS.endAnnotation,
+      ]);
+      expect(operatorList.argsArray[0]).toEqual([
+        "124R",
+        [0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0],
+        [1, 0, 0, 1, 0, 0],
       ]);
       expect(operatorList.argsArray[1]).toEqual(
         new Uint8ClampedArray([26, 51, 76])
@@ -2700,6 +2736,12 @@ describe("annotation", function () {
         OPS.setFillRGBColor,
         OPS.endAnnotation,
       ]);
+      expect(operatorList.argsArray[0]).toEqual([
+        "124R",
+        [0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0],
+        [1, 0, 0, 1, 0, 0],
+      ]);
       expect(operatorList.argsArray[1]).toEqual(
         new Uint8ClampedArray([26, 51, 76])
       );
@@ -2717,6 +2759,12 @@ describe("annotation", function () {
         OPS.beginAnnotation,
         OPS.setFillRGBColor,
         OPS.endAnnotation,
+      ]);
+      expect(operatorList.argsArray[0]).toEqual([
+        "124R",
+        [0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0],
+        [1, 0, 0, 1, 0, 0],
       ]);
       expect(operatorList.argsArray[1]).toEqual(
         new Uint8ClampedArray([76, 51, 26])
@@ -2771,6 +2819,12 @@ describe("annotation", function () {
         OPS.beginAnnotation,
         OPS.setFillRGBColor,
         OPS.endAnnotation,
+      ]);
+      expect(operatorList.argsArray[0]).toEqual([
+        "124R",
+        [0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0],
+        [1, 0, 0, 1, 0, 0],
       ]);
       expect(operatorList.argsArray[1]).toEqual(
         new Uint8ClampedArray([76, 51, 26])

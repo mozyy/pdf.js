@@ -14,8 +14,8 @@
  */
 
 class XfaLayer {
-  static setupStorage(html, fieldId, element, storage, intent) {
-    const storedData = storage.getValue(fieldId, { value: null });
+  static setupStorage(html, id, element, storage, intent) {
+    const storedData = storage.getValue(id, { value: null });
     switch (element.name) {
       case "textarea":
         if (storedData.value !== null) {
@@ -25,36 +25,22 @@ class XfaLayer {
           break;
         }
         html.addEventListener("input", event => {
-          storage.setValue(fieldId, { value: event.target.value });
+          storage.setValue(id, { value: event.target.value });
         });
         break;
       case "input":
-        if (element.attributes.type === "radio") {
-          if (storedData.value) {
+        if (
+          element.attributes.type === "radio" ||
+          element.attributes.type === "checkbox"
+        ) {
+          if (storedData.value === element.attributes.xfaOn) {
             html.setAttribute("checked", true);
           }
           if (intent === "print") {
             break;
           }
           html.addEventListener("change", event => {
-            const { target } = event;
-            for (const radio of document.getElementsByName(target.name)) {
-              if (radio !== target) {
-                const id = radio.id;
-                storage.setValue(id.split("-")[0], { value: false });
-              }
-            }
-            storage.setValue(fieldId, { value: target.checked });
-          });
-        } else if (element.attributes.type === "checkbox") {
-          if (storedData.value) {
-            html.setAttribute("checked", true);
-          }
-          if (intent === "print") {
-            break;
-          }
-          html.addEventListener("input", event => {
-            storage.setValue(fieldId, { value: event.target.checked });
+            storage.setValue(id, { value: event.target.getAttribute("xfaOn") });
           });
         } else {
           if (storedData.value !== null) {
@@ -64,7 +50,7 @@ class XfaLayer {
             break;
           }
           html.addEventListener("input", event => {
-            storage.setValue(fieldId, { value: event.target.value });
+            storage.setValue(id, { value: event.target.value });
           });
         }
         break;
@@ -80,9 +66,9 @@ class XfaLayer {
           const options = event.target.options;
           const value =
             options.selectedIndex === -1
-              ? null
+              ? ""
               : options[options.selectedIndex].value;
-          storage.setValue(fieldId, { value });
+          storage.setValue(id, { value });
         });
         break;
     }
@@ -96,7 +82,10 @@ class XfaLayer {
       attributes.name = `${attributes.name}-${intent}`;
     }
     for (const [key, value] of Object.entries(attributes)) {
-      if (value === null || value === undefined || key === "fieldId") {
+      // We don't need to add dataId in the html object but it can
+      // be useful to know its value when writing printing tests:
+      // in this case, don't skip dataId to have its value.
+      if (value === null || value === undefined || key === "dataId") {
         continue;
       }
 
@@ -115,8 +104,8 @@ class XfaLayer {
 
     // Set the value after the others to be sure overwrite
     // any other values.
-    if (storage && attributes.fieldId !== undefined) {
-      this.setupStorage(html, attributes.fieldId, element, storage);
+    if (storage && attributes.dataId) {
+      this.setupStorage(html, attributes.dataId, element, storage);
     }
   }
 
@@ -175,13 +164,24 @@ class XfaLayer {
       }
     }
 
+    /**
+     * TODO: re-enable that stuff once we've JS implementation.
+     * See https://bugzilla.mozilla.org/show_bug.cgi?id=1719465.
+     *
+     * for (const el of rootDiv.querySelectorAll(
+     * ".xfaDisabled input, .xfaDisabled textarea"
+     * )) {
+     * el.setAttribute("disabled", true);
+     * }
+     * for (const el of rootDiv.querySelectorAll(
+     * ".xfaReadOnly input, .xfaReadOnly textarea"
+     * )) {
+     * el.setAttribute("readOnly", true);
+     * }
+     */
+
     for (const el of rootDiv.querySelectorAll(
-      ".xfaDisabled input, .xfaDisabled textarea"
-    )) {
-      el.setAttribute("disabled", true);
-    }
-    for (const el of rootDiv.querySelectorAll(
-      ".xfaReadOnly input, .xfaReadOnly textarea"
+      ".xfaNonInteractive input, .xfaNonInteractive textarea"
     )) {
       el.setAttribute("readOnly", true);
     }
