@@ -32,11 +32,11 @@ const CMAP_PACKED = true;
 
 const DEFAULT_URL = "../../web/compressed.tracemonkey-pldi-09.pdf";
 // To test the AcroForm and/or scripting functionality, try e.g. this file:
-// var DEFAULT_URL = "../../test/pdfs/160F-2019.pdf";
+// "../../test/pdfs/160F-2019.pdf"
 
-const SEARCH_FOR = ""; // try 'Mozilla';
+const ENABLE_XFA = true;
+const SEARCH_FOR = ""; // try "Mozilla";
 
-// For scripting support, note also `enableScripting` below.
 const SANDBOX_BUNDLE_SRC = "../../node_modules/pdfjs-dist/build/pdf.sandbox.js";
 
 const container = document.getElementById("viewerContainer");
@@ -66,7 +66,7 @@ const pdfViewer = new pdfjsViewer.PDFViewer({
   linkService: pdfLinkService,
   findController: pdfFindController,
   scriptingManager: pdfScriptingManager,
-  enableScripting: true,
+  enableScripting: true, // Only necessary in PDF.js version 2.10.377 and below.
 });
 pdfLinkService.setViewer(pdfViewer);
 pdfScriptingManager.setViewer(pdfViewer);
@@ -77,7 +77,11 @@ eventBus.on("pagesinit", function () {
 
   // We can try searching for things.
   if (SEARCH_FOR) {
-    pdfFindController.executeCommand("find", { query: SEARCH_FOR });
+    if (!pdfFindController._onFind) {
+      pdfFindController.executeCommand("find", { query: SEARCH_FOR });
+    } else {
+      eventBus.dispatch("find", { type: "", query: SEARCH_FOR });
+    }
   }
 });
 
@@ -86,11 +90,13 @@ const loadingTask = pdfjsLib.getDocument({
   url: DEFAULT_URL,
   cMapUrl: CMAP_URL,
   cMapPacked: CMAP_PACKED,
+  enableXfa: ENABLE_XFA,
 });
-loadingTask.promise.then(function (pdfDocument) {
+(async function () {
+  const pdfDocument = await loadingTask.promise;
   // Document loaded, specifying document for the viewer and
   // the (optional) linkService.
   pdfViewer.setDocument(pdfDocument);
 
   pdfLinkService.setDocument(pdfDocument, null);
-});
+})();

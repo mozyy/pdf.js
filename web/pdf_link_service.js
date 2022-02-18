@@ -13,6 +13,10 @@
  * limitations under the License.
  */
 
+/** @typedef {import("./event_utils").EventBus} EventBus */
+/** @typedef {import("./interfaces").IPDFLinkService} IPDFLinkService */
+
+import { addLinkAttributes, LinkTarget } from "pdfjs-lib";
 import { parseQueryString } from "./ui_utils.js";
 
 /**
@@ -117,7 +121,7 @@ class PDFLinkService {
     if (typeof destRef === "object" && destRef !== null) {
       pageNumber = this._cachedPageNumber(destRef);
 
-      if (pageNumber === null) {
+      if (!pageNumber) {
         // Fetch the page reference if it's not yet available. This could
         // only occur during loading, before all pages have been resolved.
         this.pdfDocument
@@ -226,6 +230,21 @@ class PDFLinkService {
   }
 
   /**
+   * Wrapper around the `addLinkAttributes`-function in the API.
+   * @param {HTMLAnchorElement} link
+   * @param {string} url
+   * @param {boolean} [newWindow]
+   */
+  addLinkAttributes(link, url, newWindow = false) {
+    addLinkAttributes(link, {
+      url,
+      target: newWindow ? LinkTarget.BLANK : this.externalLinkTarget,
+      rel: this.externalLinkRel,
+      enabled: this.externalLinkEnabled,
+    });
+  }
+
+  /**
    * @param {string|Array} dest - The PDF destination object.
    * @returns {string} The hyperlink to the PDF object.
    */
@@ -263,20 +282,20 @@ class PDFLinkService {
     let pageNumber, dest;
     if (hash.includes("=")) {
       const params = parseQueryString(hash);
-      if ("search" in params) {
+      if (params.has("search")) {
         this.eventBus.dispatch("findfromurlhash", {
           source: this,
-          query: params.search.replace(/"/g, ""),
-          phraseSearch: params.phrase === "true",
+          query: params.get("search").replace(/"/g, ""),
+          phraseSearch: params.get("phrase") === "true",
         });
       }
       // borrowing syntax from "Parameters for Opening PDF Files"
-      if ("page" in params) {
-        pageNumber = params.page | 0 || 1;
+      if (params.has("page")) {
+        pageNumber = params.get("page") | 0 || 1;
       }
-      if ("zoom" in params) {
+      if (params.has("zoom")) {
         // Build the destination array.
-        const zoomArgs = params.zoom.split(","); // scale,left,top
+        const zoomArgs = params.get("zoom").split(","); // scale,left,top
         const zoomArg = zoomArgs[0];
         const zoomArgNumber = parseFloat(zoomArg);
 
@@ -336,16 +355,16 @@ class PDFLinkService {
       } else if (pageNumber) {
         this.page = pageNumber; // simple page
       }
-      if ("pagemode" in params) {
+      if (params.has("pagemode")) {
         this.eventBus.dispatch("pagemode", {
           source: this,
-          mode: params.pagemode,
+          mode: params.get("pagemode"),
         });
       }
       // Ensure that this parameter is *always* handled last, in order to
       // guarantee that it won't be overridden (e.g. by the "page" parameter).
-      if ("nameddest" in params) {
-        this.goToDestination(params.nameddest);
+      if (params.has("nameddest")) {
+        this.goToDestination(params.get("nameddest"));
       }
     } else {
       // Named (or explicit) destination.
@@ -378,15 +397,11 @@ class PDFLinkService {
     // See PDF reference, table 8.45 - Named action
     switch (action) {
       case "GoBack":
-        if (this.pdfHistory) {
-          this.pdfHistory.back();
-        }
+        this.pdfHistory?.back();
         break;
 
       case "GoForward":
-        if (this.pdfHistory) {
-          this.pdfHistory.forward();
-        }
+        this.pdfHistory?.forward();
         break;
 
       case "NextPage":
@@ -432,6 +447,9 @@ class PDFLinkService {
    * @private
    */
   _cachedPageNumber(pageRef) {
+    if (!pageRef) {
+      return null;
+    }
     const refStr =
       pageRef.gen === 0 ? `${pageRef.num}R` : `${pageRef.num}R${pageRef.gen}`;
     return this._pagesRefCache?.[refStr] || null;
@@ -516,10 +534,7 @@ function isValidExplicitDestination(dest) {
  */
 class SimpleLinkService {
   constructor() {
-    this.externalLinkTarget = null;
-    this.externalLinkRel = null;
     this.externalLinkEnabled = true;
-    this._ignoreDestinationZoom = false;
   }
 
   /**
@@ -562,6 +577,15 @@ class SimpleLinkService {
    * @param {number|string} val - The page number, or page label.
    */
   goToPage(val) {}
+
+  /**
+   * @param {HTMLAnchorElement} link
+   * @param {string} url
+   * @param {boolean} [newWindow]
+   */
+  addLinkAttributes(link, url, newWindow = false) {
+    addLinkAttributes(link, { url, enabled: this.externalLinkEnabled });
+  }
 
   /**
    * @param dest - The PDF destination object.

@@ -13,6 +13,8 @@
  * limitations under the License.
  */
 
+/** @typedef {import("../src/display/api").PDFPageProxy} PDFPageProxy */
+
 const PDF_ROLE_TO_HTML_ROLE = {
   // Document level structure types
   Document: null, // There's a "document" role, but it doesn't make sense here.
@@ -73,7 +75,7 @@ const HEADING_PATTERN = /^H(\d+)$/;
 
 /**
  * @typedef {Object} StructTreeLayerBuilderOptions
- * @property {PDFPage} pdfPage
+ * @property {PDFPageProxy} pdfPage
  */
 
 class StructTreeLayerBuilder {
@@ -94,6 +96,9 @@ class StructTreeLayerBuilder {
     }
     if (structElement.id !== undefined) {
       htmlElement.setAttribute("aria-owns", structElement.id);
+    }
+    if (structElement.lang !== undefined) {
+      htmlElement.setAttribute("lang", structElement.lang);
     }
   }
 
@@ -131,19 +136,4 @@ class StructTreeLayerBuilder {
   }
 }
 
-/**
- * @implements IPDFStructTreeLayerFactory
- */
-class DefaultStructTreeLayerFactory {
-  /**
-   * @param {PDFPage} pdfPage
-   * @returns {StructTreeLayerBuilder}
-   */
-  createStructTreeLayerBuilder(pdfPage) {
-    return new StructTreeLayerBuilder({
-      pdfPage,
-    });
-  }
-}
-
-export { DefaultStructTreeLayerFactory, StructTreeLayerBuilder };
+export { StructTreeLayerBuilder };

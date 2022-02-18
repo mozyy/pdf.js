@@ -83,10 +83,16 @@ function writeValue(value, buffer, transform) {
     buffer.push(`(${escapeString(value)})`);
   } else if (typeof value === "number") {
     buffer.push(numberToString(value));
+  } else if (typeof value === "boolean") {
+    buffer.push(value.toString());
   } else if (isDict(value)) {
     writeDict(value, buffer, transform);
   } else if (isStream(value)) {
     writeStream(value, buffer, transform);
+  } else if (value === null) {
+    buffer.push("null");
+  } else {
+    warn(`Unhandled value in writer: ${typeof value}, please file a bug.`);
   }
 }
 
@@ -146,30 +152,74 @@ function writeXFADataForAcroform(str, newRefs) {
   return buffer.join("");
 }
 
-function updateXFA(xfaData, datasetsRef, newRefs, xref) {
-  if (datasetsRef === null || xref === null) {
+function updateXFA({
+  xfaData,
+  xfaDatasetsRef,
+  hasXfaDatasetsEntry,
+  acroFormRef,
+  acroForm,
+  newRefs,
+  xref,
+  xrefInfo,
+}) {
+  if (xref === null) {
     return;
   }
+
+  if (!hasXfaDatasetsEntry) {
+    if (!acroFormRef) {
+      warn("XFA - Cannot save it");
+      return;
+    }
+
+    // We've a XFA array which doesn't contain a datasets entry.
+    // So we'll update the AcroForm dictionary to have an XFA containing
+    // the datasets.
+    const oldXfa = acroForm.get("XFA");
+    const newXfa = oldXfa.slice();
+    newXfa.splice(2, 0, "datasets");
+    newXfa.splice(3, 0, xfaDatasetsRef);
+
+    acroForm.set("XFA", newXfa);
+
+    const encrypt = xref.encrypt;
+    let transform = null;
+    if (encrypt) {
+      transform = encrypt.createCipherTransform(
+        acroFormRef.num,
+        acroFormRef.gen
+      );
+    }
+
+    const buffer = [`${acroFormRef.num} ${acroFormRef.gen} obj\n`];
+    writeDict(acroForm, buffer, transform);
+    buffer.push("\n");
+
+    acroForm.set("XFA", oldXfa);
+
+    newRefs.push({ ref: acroFormRef, data: buffer.join("") });
+  }
+
   if (xfaData === null) {
-    const datasets = xref.fetchIfRef(datasetsRef);
+    const datasets = xref.fetchIfRef(xfaDatasetsRef);
     xfaData = writeXFADataForAcroform(datasets.getString(), newRefs);
   }
 
   const encrypt = xref.encrypt;
   if (encrypt) {
     const transform = encrypt.createCipherTransform(
-      datasetsRef.num,
-      datasetsRef.gen
+      xfaDatasetsRef.num,
+      xfaDatasetsRef.gen
     );
     xfaData = transform.encryptString(xfaData);
   }
   const data =
-    `${datasetsRef.num} ${datasetsRef.gen} obj\n` +
+    `${xfaDatasetsRef.num} ${xfaDatasetsRef.gen} obj\n` +
     `<< /Type /EmbeddedFile /Length ${xfaData.length}>>\nstream\n` +
     xfaData +
     "\nendstream\nendobj\n";
 
-  newRefs.push({ ref: datasetsRef, data });
+  newRefs.push({ ref: xfaDatasetsRef, data });
 }
 
 function incrementalUpdate({
@@ -177,10 +227,25 @@ function incrementalUpdate({
   xrefInfo,
   newRefs,
   xref = null,
-  datasetsRef = null,
+  hasXfa = false,
+  xfaDatasetsRef = null,
+  hasXfaDatasetsEntry = false,
+  acroFormRef = null,
+  acroForm = null,
   xfaData = null,
 }) {
-  updateXFA(xfaData, datasetsRef, newRefs, xref);
+  if (hasXfa) {
+    updateXFA({
+      xfaData,
+      xfaDatasetsRef,
+      hasXfaDatasetsEntry,
+      acroFormRef,
+      acroForm,
+      newRefs,
+      xref,
+      xrefInfo,
+    });
+  }
 
   const newXref = new Dict(null);
   const refForXrefTable = xrefInfo.newRef;

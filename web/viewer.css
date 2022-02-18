@@ -19,6 +19,8 @@
   --sidebar-width: 200px;
   --sidebar-transition-duration: 200ms;
   --sidebar-transition-timing-function: ease;
+  --scale-select-container-width: 140px;
+  --scale-select-overflow: 22px;
   --loadingBar-end-offset: 0;
 
   --toolbar-icon-opacity: 0.7;
@@ -92,6 +94,7 @@
   --secondaryToolbarButton-rotateCw-icon: url(images/secondaryToolbarButton-rotateCw.svg);
   --secondaryToolbarButton-selectTool-icon: url(images/secondaryToolbarButton-selectTool.svg);
   --secondaryToolbarButton-handTool-icon: url(images/secondaryToolbarButton-handTool.svg);
+  --secondaryToolbarButton-scrollPage-icon: url(images/secondaryToolbarButton-scrollPage.svg);
   --secondaryToolbarButton-scrollVertical-icon: url(images/secondaryToolbarButton-scrollVertical.svg);
   --secondaryToolbarButton-scrollHorizontal-icon: url(images/secondaryToolbarButton-scrollHorizontal.svg);
   --secondaryToolbarButton-scrollWrapped-icon: url(images/secondaryToolbarButton-scrollWrapped.svg);
@@ -150,7 +153,6 @@
 
 @media screen and (forced-colors: active) {
   :root {
-    --main-color: ButtonText;
     --button-hover-color: Highlight;
     --doorhanger-hover-bg-color: Highlight;
     --toolbar-icon-opacity: 1;
@@ -202,14 +204,8 @@ select {
   display: none !important;
 }
 
-.pdfViewer.enablePermissions .textLayer span {
-  user-select: none !important;
-  cursor: not-allowed;
-}
-
 #viewerContainer.pdfPresentationMode:fullscreen {
   top: 0;
-  border-top: 2px solid rgba(0, 0, 0, 0);
   background-color: rgba(0, 0, 0, 1);
   width: 100%;
   height: 100%;
@@ -624,11 +620,6 @@ html[dir="rtl"] .secondaryToolbar {
   margin-bottom: -4px;
 }
 
-#secondaryToolbarButtonContainer.hiddenScrollModeButtons > .scrollModeButtons,
-#secondaryToolbarButtonContainer.hiddenSpreadModeButtons > .spreadModeButtons {
-  display: none !important;
-}
-
 .doorHanger,
 .doorHangerRight {
   border-radius: 2px;
@@ -887,7 +878,7 @@ html[dir="rtl"] #toolbarViewerLeft > .toolbarButton:first-child {
 }
 
 .dropdownToolbarButton {
-  width: 140px;
+  width: var(--scale-select-container-width);
   padding: 0;
   overflow: hidden;
   background-color: var(--dropdown-btn-bg-color);
@@ -908,7 +899,9 @@ html[dir="rtl"] .dropdownToolbarButton::after {
 }
 
 .dropdownToolbarButton > select {
-  width: 162px;
+  width: calc(
+    var(--scale-select-container-width) + var(--scale-select-overflow)
+  );
   height: 28px;
   font-size: 12px;
   color: var(--main-color);
@@ -1191,6 +1184,11 @@ html[dir="rtl"] .secondaryToolbarButton > span {
 .secondaryToolbarButton.handTool::before {
   -webkit-mask-image: var(--secondaryToolbarButton-handTool-icon);
   mask-image: var(--secondaryToolbarButton-handTool-icon);
+}
+
+.secondaryToolbarButton.scrollPage::before {
+  -webkit-mask-image: var(--secondaryToolbarButton-scrollPage-icon);
+  mask-image: var(--secondaryToolbarButton-scrollPage-icon);
 }
 
 .secondaryToolbarButton.scrollVertical::before {
@@ -1698,6 +1696,7 @@ html[dir="rtl"] #documentPropertiesOverlay .row > * {
 }
 #PDFBug table {
   font-size: 10px;
+  white-space: pre;
 }
 #PDFBug table.showText {
   border-collapse: collapse;
@@ -1845,7 +1844,7 @@ html[dir="rtl"] #documentPropertiesOverlay .row > * {
   }
 
   #printContainer > .xfaPrintedPage .xfaPage {
-    position: initial;
+    position: absolute;
   }
 
   #printContainer > .xfaPrintedPage {

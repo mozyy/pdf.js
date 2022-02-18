@@ -107,6 +107,9 @@ class ChunkedStream extends Stream {
     }
 
     const chunk = Math.floor(pos / this.chunkSize);
+    if (chunk > this.numChunks) {
+      return;
+    }
     if (chunk === this.lastSuccessfulEnsureByteChunk) {
       return;
     }
@@ -125,9 +128,14 @@ class ChunkedStream extends Stream {
       return;
     }
 
-    const chunkSize = this.chunkSize;
-    const beginChunk = Math.floor(begin / chunkSize);
-    const endChunk = Math.floor((end - 1) / chunkSize) + 1;
+    const beginChunk = Math.floor(begin / this.chunkSize);
+    if (beginChunk > this.numChunks) {
+      return;
+    }
+    const endChunk = Math.min(
+      Math.floor((end - 1) / this.chunkSize) + 1,
+      this.numChunks
+    );
     for (let chunk = beginChunk; chunk < endChunk; ++chunk) {
       if (!this._loadedChunks.has(chunk)) {
         throw new MissingDataException(begin, end);
@@ -290,7 +298,7 @@ class ChunkedStreamManager {
 
     let chunks = [],
       loaded = 0;
-    const promise = new Promise((resolve, reject) => {
+    return new Promise((resolve, reject) => {
       const readChunk = chunk => {
         try {
           if (!chunk.done) {
@@ -311,14 +319,12 @@ class ChunkedStreamManager {
         }
       };
       rangeReader.read().then(readChunk, reject);
-    });
-    promise.then(data => {
+    }).then(data => {
       if (this.aborted) {
         return; // Ignoring any data after abort.
       }
       this.onReceiveData({ chunk: data, begin });
     });
-    // TODO check errors
   }
 
   /**
@@ -369,7 +375,7 @@ class ChunkedStreamManager {
           groupedChunk.endChunk * this.chunkSize,
           this.length
         );
-        this.sendRequest(begin, end);
+        this.sendRequest(begin, end).catch(capability.reject);
       }
     }
 

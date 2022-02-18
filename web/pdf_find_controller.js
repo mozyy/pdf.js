@@ -13,6 +13,10 @@
  * limitations under the License.
  */
 
+/** @typedef {import("../src/display/api").PDFDocumentProxy} PDFDocumentProxy */
+/** @typedef {import("./event_utils").EventBus} EventBus */
+/** @typedef {import("./interfaces").IPDFLinkService} IPDFLinkService */
+
 import { createPromiseCapability } from "pdfjs-lib";
 import { getCharacterType } from "./pdf_find_utils.js";
 import { scrollIntoView } from "./ui_utils.js";
@@ -104,7 +108,22 @@ class PDFFindController {
     this._eventBus = eventBus;
 
     this._reset();
+    eventBus._on("find", this._onFind.bind(this));
     eventBus._on("findbarclose", this._onFindBarClose.bind(this));
+
+    if (typeof PDFJSDev === "undefined" || PDFJSDev.test("GENERIC")) {
+      this.executeCommand = (cmd, state) => {
+        console.error(
+          "Deprecated method `PDFFindController.executeCommand` called, " +
+            'please dispatch a "find"-event using the EventBus instead.'
+        );
+
+        const eventState = Object.assign(Object.create(null), state, {
+          type: cmd.substring("find".length),
+        });
+        this._onFind(eventState);
+      };
+    }
   }
 
   get highlightMatches() {
@@ -144,17 +163,21 @@ class PDFFindController {
     this._firstPageCapability.resolve();
   }
 
-  executeCommand(cmd, state) {
+  /**
+   * @private
+   */
+  _onFind(state) {
     if (!state) {
       return;
     }
     const pdfDocument = this._pdfDocument;
+    const { type } = state;
 
-    if (this._state === null || this._shouldDirtyMatch(cmd, state)) {
+    if (this._state === null || this._shouldDirtyMatch(state)) {
       this._dirtyMatch = true;
     }
     this._state = state;
-    if (cmd !== "findhighlightallchange") {
+    if (type !== "highlightallchange") {
       this._updateUIState(FindState.PENDING);
     }
 
@@ -176,7 +199,7 @@ class PDFFindController {
         clearTimeout(this._findTimeout);
         this._findTimeout = null;
       }
-      if (cmd === "find") {
+      if (!type) {
         // Trigger the find action with a small delay to avoid starting the
         // search when the user is still typing (saving resources).
         this._findTimeout = setTimeout(() => {
@@ -187,7 +210,7 @@ class PDFFindController {
         // Immediately trigger searching for non-'find' operations, when the
         // current state needs to be reset and matches re-calculated.
         this._nextMatch();
-      } else if (cmd === "findagain") {
+      } else if (type === "again") {
         this._nextMatch();
 
         // When the findbar was previously closed, and `highlightAll` is set,
@@ -195,7 +218,7 @@ class PDFFindController {
         if (findbarClosed && this._state.highlightAll) {
           this._updateAllPages();
         }
-      } else if (cmd === "findhighlightallchange") {
+      } else if (type === "highlightallchange") {
         // If there was a pending search operation, synchronously trigger a new
         // search *first* to ensure that the correct matches are highlighted.
         if (pendingTimeout) {
@@ -275,14 +298,14 @@ class PDFFindController {
     return this._normalizedQuery;
   }
 
-  _shouldDirtyMatch(cmd, state) {
+  _shouldDirtyMatch(state) {
     // When the search query changes, regardless of the actual search command
     // used, always re-calculate matches to avoid errors (fixes bug 1030622).
     if (state.query !== this._state.query) {
       return true;
     }
-    switch (cmd) {
-      case "findagain":
+    switch (state.type) {
+      case "again":
         const pageNumber = this._selected.pageIdx + 1;
         const linkService = this._linkService;
         // Only treat a 'findagain' event as a new search operation when it's
@@ -302,7 +325,7 @@ class PDFFindController {
           return true;
         }
         return false;
-      case "findhighlightallchange":
+      case "highlightallchange":
         return false;
     }
     return true;
@@ -797,7 +820,7 @@ class PDFFindController {
     });
   }
 
-  _updateUIState(state, previous) {
+  _updateUIState(state, previous = false) {
     this._eventBus.dispatch("updatefindcontrolstate", {
       source: this,
       state,

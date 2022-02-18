@@ -13,9 +13,10 @@
  * limitations under the License.
  */
 
+/** @typedef {import("./event_utils").EventBus} EventBus */
+
+import { apiPageLayoutToViewerModes, RenderingStates } from "./ui_utils.js";
 import { createPromiseCapability, shadow } from "pdfjs-lib";
-import { apiPageLayoutToSpreadMode } from "./ui_utils.js";
-import { RenderingStates } from "./pdf_rendering_queue.js";
 
 /**
  * @typedef {Object} PDFScriptingManagerOptions
@@ -287,7 +288,11 @@ class PDFScriptingManager {
           console.error(value);
           break;
         case "layout":
-          this._pdfViewer.spreadMode = apiPageLayoutToSpreadMode(value);
+          if (isInPresentationMode) {
+            return;
+          }
+          const modes = apiPageLayoutToViewerModes(value);
+          this._pdfViewer.spreadMode = modes.spreadMode;
           break;
         case "page-num":
           this._pdfViewer.currentPageNumber = value + 1;
@@ -304,6 +309,33 @@ class PDFScriptingManager {
             return;
           }
           this._pdfViewer.currentScaleValue = value;
+          break;
+        case "SaveAs":
+          this._eventBus.dispatch("save", { source: this });
+          break;
+        case "FirstPage":
+          this._pdfViewer.currentPageNumber = 1;
+          break;
+        case "LastPage":
+          this._pdfViewer.currentPageNumber = this._pdfViewer.pagesCount;
+          break;
+        case "NextPage":
+          this._pdfViewer.nextPage();
+          break;
+        case "PrevPage":
+          this._pdfViewer.previousPage();
+          break;
+        case "ZoomViewIn":
+          if (isInPresentationMode) {
+            return;
+          }
+          this._pdfViewer.increaseScale();
+          break;
+        case "ZoomViewOut":
+          if (isInPresentationMode) {
+            return;
+          }
+          this._pdfViewer.decreaseScale();
           break;
       }
       return;

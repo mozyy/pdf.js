@@ -26,10 +26,10 @@ import {
   $toStyle,
   XFAObject,
 } from "./xfa_object.js";
+import { createValidAbsoluteUrl, warn } from "../../shared/util.js";
 import { getMeasurement, stripQuotes } from "./utils.js";
 import { selectFont } from "./fonts.js";
 import { TextMeasure } from "./text.js";
-import { warn } from "../../shared/util.js";
 
 function measureToString(m) {
   if (typeof m === "string") {
@@ -238,7 +238,7 @@ function layoutNode(node, availableSpace) {
     if (!font) {
       const root = node[$getTemplateRoot]();
       let parent = node[$getParent]();
-      while (parent !== root) {
+      while (parent && parent !== root) {
         if (parent.font) {
           font = parent.font;
           break;
@@ -247,7 +247,7 @@ function layoutNode(node, availableSpace) {
       }
     }
 
-    const maxWidth = !node.w ? availableSpace.width : node.w;
+    const maxWidth = (!node.w ? availableSpace.width : node.w) - marginH;
     const fontFinder = node[$globalData].fontFinder;
     if (
       node.value.exData &&
@@ -560,6 +560,11 @@ function isPrintOnly(node) {
   );
 }
 
+function getCurrentPara(node) {
+  const stack = node[$getTemplateRoot]()[$extra].paraStack;
+  return stack.length ? stack[stack.length - 1] : null;
+}
+
 function setPara(node, nodeStyle, value) {
   if (value.attributes.class && value.attributes.class.includes("xfaRich")) {
     if (nodeStyle) {
@@ -570,13 +575,15 @@ function setPara(node, nodeStyle, value) {
         nodeStyle.width = "auto";
       }
     }
-    if (node.para) {
+
+    const para = getCurrentPara(node);
+    if (para) {
       // By definition exData are external data so para
       // has no effect on it.
       const valueStyle = value.attributes.style;
       valueStyle.display = "flex";
       valueStyle.flexDirection = "column";
-      switch (node.para.vAlign) {
+      switch (para.vAlign) {
         case "top":
           valueStyle.justifyContent = "start";
           break;
@@ -588,7 +595,7 @@ function setPara(node, nodeStyle, value) {
           break;
       }
 
-      const paraStyle = node.para[$toStyle]();
+      const paraStyle = para[$toStyle]();
       for (const [key, val] of Object.entries(paraStyle)) {
         if (!(key in valueStyle)) {
           valueStyle[key] = val;
@@ -598,28 +605,46 @@ function setPara(node, nodeStyle, value) {
   }
 }
 
-function setFontFamily(xfaFont, fontFinder, style) {
-  const name = stripQuotes(xfaFont.typeface);
-  const typeface = fontFinder.find(name);
+function setFontFamily(xfaFont, node, fontFinder, style) {
+  if (!fontFinder) {
+    // The font cannot be found in the pdf so use the default one.
+    delete style.fontFamily;
+    return;
+  }
 
+  const name = stripQuotes(xfaFont.typeface);
   style.fontFamily = `"${name}"`;
+
+  const typeface = fontFinder.find(name);
   if (typeface) {
     const { fontFamily } = typeface.regular.cssFontInfo;
     if (fontFamily !== name) {
       style.fontFamily = `"${fontFamily}"`;
     }
+
+    const para = getCurrentPara(node);
+    if (para && para.lineHeight !== "") {
+      return;
+    }
+
     if (style.lineHeight) {
       // Already something so don't overwrite.
       return;
     }
 
     const pdfFont = selectFont(xfaFont, typeface);
-    if (pdfFont && pdfFont.lineHeight > 0) {
+    if (pdfFont) {
       style.lineHeight = Math.max(1.2, pdfFont.lineHeight);
-    } else {
-      style.lineHeight = 1.2;
     }
   }
+}
+
+function fixURL(str) {
+  const absoluteUrl = createValidAbsoluteUrl(str, /* baseUrl = */ null, {
+    addDefaultProtocol: true,
+    tryConvertEncoding: true,
+  });
+  return absoluteUrl ? absoluteUrl.href : null;
 }
 
 export {
@@ -627,6 +652,7 @@ export {
   createWrapper,
   fixDimensions,
   fixTextIndent,
+  fixURL,
   isPrintOnly,
   layoutClass,
   layoutNode,

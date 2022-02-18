@@ -120,7 +120,7 @@ function createBidiText(str, isLTR, vertical = false) {
 const chars = [];
 const types = [];
 
-function bidi(str, startLevel, vertical) {
+function bidi(str, startLevel = -1, vertical = false) {
   let isLTR = true;
   const strLength = str.length;
   if (strLength === 0 || vertical) {
@@ -158,7 +158,8 @@ function bidi(str, startLevel, vertical) {
 
   // Detect the bidi method
   // - If there are no rtl characters then no bidi needed
-  // - If less than 30% chars are rtl then string is primarily ltr
+  // - If less than 30% chars are rtl then string is primarily ltr,
+  //   unless the string is very short.
   // - If more than 30% chars are rtl then string is primarily rtl
   if (numBidi === 0) {
     isLTR = true;
@@ -166,7 +167,7 @@ function bidi(str, startLevel, vertical) {
   }
 
   if (startLevel === -1) {
-    if (numBidi / strLength < 0.3) {
+    if (numBidi / strLength < 0.3 && strLength > 4) {
       isLTR = true;
       startLevel = 0;
     } else {

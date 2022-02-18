@@ -45,6 +45,7 @@ import {
 import {
   getGlyphMapForStandardFonts,
   getNonStdFontMap,
+  getSerifFonts,
   getStdFontMap,
   getSupplementalGlyphMapForArialBlack,
   getSupplementalGlyphMapForCalibri,
@@ -89,8 +90,6 @@ const EXPORT_DATA_PROPERTIES = [
   "fallbackName",
   "fontMatrix",
   "fontType",
-  "isMonospace",
-  "isSerifFont",
   "isType3Font",
   "italic",
   "loadedName",
@@ -107,6 +106,8 @@ const EXPORT_DATA_EXTRA_PROPERTIES = [
   "cMap",
   "defaultEncoding",
   "differences",
+  "isMonospace",
+  "isSerifFont",
   "isSymbolicFont",
   "seacMap",
   "toFontChar",
@@ -148,9 +149,9 @@ function adjustToUnicode(properties, builtInEncoding) {
       if (properties.toUnicode.has(charCode)) {
         continue; // The font dictionary has a `ToUnicode` entry.
       }
-    } else {
+    } else if (properties.hasEncoding) {
       if (
-        properties.hasEncoding &&
+        properties.differences.length === 0 ||
         properties.differences[charCode] !== undefined
       ) {
         continue; // The font dictionary has an `Encoding`/`Differences` entry.
@@ -376,6 +377,12 @@ function getFontFileType(file, { type, subtype, composite }) {
   return [fileType, fileSubtype];
 }
 
+function applyStandardFontGlyphMap(map, glyphMap) {
+  for (const charCode in glyphMap) {
+    map[+charCode] = glyphMap[charCode];
+  }
+}
+
 function buildToFontChar(encoding, glyphsUnicodeMap, differences) {
   const toFontChar = [];
   let unicode;
@@ -392,6 +399,21 @@ function buildToFontChar(encoding, glyphsUnicodeMap, differences) {
     }
   }
   return toFontChar;
+}
+
+function convertCidString(charCode, cid, shouldThrow = false) {
+  switch (cid.length) {
+    case 1:
+      return cid.charCodeAt(0);
+    case 2:
+      return (cid.charCodeAt(0) << 8) | cid.charCodeAt(1);
+  }
+  const msg = `Unsupported CID string (charCode ${charCode}): "${cid}".`;
+  if (shouldThrow) {
+    throw new FormatError(msg);
+  }
+  warn(msg);
+  return cid;
 }
 
 /**
@@ -866,7 +888,21 @@ class Font {
     this._charsCache = Object.create(null);
     this._glyphCache = Object.create(null);
 
-    this.isSerifFont = !!(properties.flags & FontFlags.Serif);
+    let isSerifFont = !!(properties.flags & FontFlags.Serif);
+    // Fallback to checking the font name, in order to improve text-selection,
+    // since the /Flags-entry is often wrong (fixes issue13845.pdf).
+    if (!isSerifFont && !properties.isSimulatedFlags) {
+      const baseName = name.replace(/[,_]/g, "-").split("-")[0],
+        serifFonts = getSerifFonts();
+      for (const namePart of baseName.split("+")) {
+        if (serifFonts[namePart]) {
+          isSerifFont = true;
+          break;
+        }
+      }
+    }
+    this.isSerifFont = isSerifFont;
+
     this.isSymbolicFont = !!(properties.flags & FontFlags.Symbolic);
     this.isMonospace = !!(properties.flags & FontFlags.FixedPitch);
 
@@ -908,7 +944,7 @@ class Font {
       return;
     }
 
-    this.cidEncoding = properties.cidEncoding;
+    this.cidEncoding = properties.cidEncoding || "";
     this.vertical = !!properties.vertical;
     if (this.vertical) {
       this.vmetrics = properties.vmetrics;
@@ -1052,27 +1088,18 @@ class Font {
       type === "CIDFontType2" &&
       this.cidEncoding.startsWith("Identity-")
     ) {
-      const GlyphMapForStandardFonts = getGlyphMapForStandardFonts(),
-        cidToGidMap = properties.cidToGidMap;
+      const cidToGidMap = properties.cidToGidMap;
       // Standard fonts might be embedded as CID font without glyph mapping.
       // Building one based on GlyphMapForStandardFonts.
       const map = [];
-      for (const charCode in GlyphMapForStandardFonts) {
-        map[+charCode] = GlyphMapForStandardFonts[charCode];
-      }
+      applyStandardFontGlyphMap(map, getGlyphMapForStandardFonts());
+
       if (/Arial-?Black/i.test(name)) {
-        const SupplementalGlyphMapForArialBlack =
-          getSupplementalGlyphMapForArialBlack();
-        for (const charCode in SupplementalGlyphMapForArialBlack) {
-          map[+charCode] = SupplementalGlyphMapForArialBlack[charCode];
-        }
+        applyStandardFontGlyphMap(map, getSupplementalGlyphMapForArialBlack());
       } else if (/Calibri/i.test(name)) {
-        const SupplementalGlyphMapForCalibri =
-          getSupplementalGlyphMapForCalibri();
-        for (const charCode in SupplementalGlyphMapForCalibri) {
-          map[+charCode] = SupplementalGlyphMapForCalibri[charCode];
-        }
+        applyStandardFontGlyphMap(map, getSupplementalGlyphMapForCalibri());
       }
+
       // Always update the glyph mapping with the `cidToGidMap` when it exists
       // (fixes issue12418_reduced.pdf).
       if (cidToGidMap) {
@@ -1082,10 +1109,23 @@ class Font {
             map[+charCode] = cidToGidMap[cid];
           }
         }
+        // When the /CIDToGIDMap is "incomplete", fallback to the included
+        // /ToUnicode-map regardless of its encoding (fixes issue11915.pdf).
+        if (
+          cidToGidMap.length !== this.toUnicode.length &&
+          properties.hasIncludedToUnicodeMap &&
+          this.toUnicode instanceof IdentityToUnicodeMap
+        ) {
+          this.toUnicode.forEach(function (charCode, unicodeCharCode) {
+            const cid = map[charCode];
+            if (cidToGidMap[cid] === undefined) {
+              map[+charCode] = unicodeCharCode;
+            }
+          });
+        }
       }
 
-      const isIdentityUnicode = this.toUnicode instanceof IdentityToUnicodeMap;
-      if (!isIdentityUnicode) {
+      if (!(this.toUnicode instanceof IdentityToUnicodeMap)) {
         this.toUnicode.forEach(function (charCode, unicodeCharCode) {
           map[+charCode] = unicodeCharCode;
         });
@@ -1108,11 +1148,22 @@ class Font {
         this.differences
       );
     } else if (isStandardFont) {
-      this.toFontChar = buildToFontChar(
+      const map = buildToFontChar(
         this.defaultEncoding,
         getGlyphsUnicode(),
         this.differences
       );
+
+      if (
+        type === "CIDFontType2" &&
+        !this.cidEncoding.startsWith("Identity-") &&
+        !(this.toUnicode instanceof IdentityToUnicodeMap)
+      ) {
+        this.toUnicode.forEach(function (charCode, unicodeCharCode) {
+          map[+charCode] = unicodeCharCode;
+        });
+      }
+      this.toFontChar = map;
     } else {
       const glyphsUnicodeMap = getGlyphsUnicode();
       const map = [];
@@ -1133,10 +1184,7 @@ class Font {
       if (this.composite && this.toUnicode instanceof IdentityToUnicodeMap) {
         if (/Verdana/i.test(name)) {
           // Fixes issue11242_reduced.pdf
-          const GlyphMapForStandardFonts = getGlyphMapForStandardFonts();
-          for (const charCode in GlyphMapForStandardFonts) {
-            map[+charCode] = GlyphMapForStandardFonts[charCode];
-          }
+          applyStandardFontGlyphMap(map, getGlyphMapForStandardFonts());
         }
       }
       this.toFontChar = map;
@@ -1449,6 +1497,55 @@ class Font {
           });
         }
         hasShortCmap = true;
+      } else if (format === 2) {
+        const subHeaderKeys = [];
+        let maxSubHeaderKey = 0;
+        // Read subHeaderKeys. If subHeaderKeys[i] === 0, then i is a
+        // single-byte character. Otherwise, i is the first byte of a
+        // multi-byte character, and the value is 8*index into
+        // subHeaders.
+        for (let i = 0; i < 256; i++) {
+          const subHeaderKey = file.getUint16() >> 3;
+          subHeaderKeys.push(subHeaderKey);
+          maxSubHeaderKey = Math.max(subHeaderKey, maxSubHeaderKey);
+        }
+        // Read subHeaders. The number of entries is determined
+        // dynamically based on the subHeaderKeys found above.
+        const subHeaders = [];
+        for (let i = 0; i <= maxSubHeaderKey; i++) {
+          subHeaders.push({
+            firstCode: file.getUint16(),
+            entryCount: file.getUint16(),
+            idDelta: signedInt16(file.getByte(), file.getByte()),
+            idRangePos: file.pos + file.getUint16(),
+          });
+        }
+        for (let i = 0; i < 256; i++) {
+          if (subHeaderKeys[i] === 0) {
+            // i is a single-byte code.
+            file.pos = subHeaders[0].idRangePos + 2 * i;
+            glyphId = file.getUint16();
+            mappings.push({
+              charCode: i,
+              glyphId,
+            });
+          } else {
+            // i is the first byte of a two-byte code.
+            const s = subHeaders[subHeaderKeys[i]];
+            for (j = 0; j < s.entryCount; j++) {
+              const charCode = (i << 8) + j + s.firstCode;
+              file.pos = s.idRangePos + 2 * j;
+              glyphId = file.getUint16();
+              if (glyphId !== 0) {
+                glyphId = (glyphId + s.idDelta) % 65536;
+              }
+              mappings.push({
+                charCode,
+                glyphId,
+              });
+            }
+          }
+        }
       } else if (format === 4) {
         // re-creating the table in format 4 since the encoding
         // might be changed
@@ -2550,7 +2647,8 @@ class Font {
     this.lineGap = metricsOverride.lineGap / metricsOverride.unitsPerEm;
 
     if (this.cssFontInfo && this.cssFontInfo.lineHeight) {
-      this.lineHeight = this.cssFontInfo.lineHeight;
+      this.lineHeight = this.cssFontInfo.metrics.lineHeight;
+      this.lineGap = this.cssFontInfo.metrics.lineGap;
     } else {
       this.lineHeight = this.ascent - this.descent + this.lineGap;
     }
@@ -2578,6 +2676,9 @@ class Font {
       const isCidToGidMapEmpty = cidToGidMap.length === 0;
 
       properties.cMap.forEach(function (charCode, cid) {
+        if (typeof cid === "string") {
+          cid = convertCidString(charCode, cid, /* shouldThrow = */ true);
+        }
         if (cid > 0xffff) {
           throw new FormatError("Max size of CID is 65,535");
         }
@@ -2605,7 +2706,8 @@ class Font {
       const cmapEncodingId = cmapTable.encodingId;
       const cmapMappings = cmapTable.mappings;
       const cmapMappingsLength = cmapMappings.length;
-      let baseEncoding = [];
+      let baseEncoding = [],
+        forcePostTable = false;
       if (
         properties.hasEncoding &&
         (properties.baseEncodingName === "MacRomanEncoding" ||
@@ -2614,9 +2716,8 @@ class Font {
         baseEncoding = getEncoding(properties.baseEncodingName);
       }
 
-      // If the font has an encoding and is not symbolic then follow the
-      // rules in section 9.6.6.4 of the spec on how to map 3,1 and 1,0
-      // cmaps.
+      // If the font has an encoding and is not symbolic then follow the rules
+      // in section 9.6.6.4 of the spec on how to map 3,1 and 1,0 cmaps.
       if (
         properties.hasEncoding &&
         !this.isSymbolicFont &&
@@ -2628,7 +2729,7 @@ class Font {
           let glyphName;
           if (this.differences[charCode] !== undefined) {
             glyphName = this.differences[charCode];
-          } else if (baseEncoding[charCode] !== "") {
+          } else if (baseEncoding.length && baseEncoding[charCode] !== "") {
             glyphName = baseEncoding[charCode];
           } else {
             glyphName = StandardEncoding[charCode];
@@ -2650,6 +2751,25 @@ class Font {
             unicodeOrCharCode = MacRomanEncoding.indexOf(standardGlyphName);
           }
 
+          if (unicodeOrCharCode === undefined) {
+            // Not a valid glyph name, fallback to using the /ToUnicode map
+            // when no post-table exists (fixes issue13316_reduced.pdf).
+            if (
+              !properties.glyphNames &&
+              properties.hasIncludedToUnicodeMap &&
+              !(this.toUnicode instanceof IdentityToUnicodeMap)
+            ) {
+              const unicode = this.toUnicode.get(charCode);
+              if (unicode) {
+                unicodeOrCharCode = unicode.codePointAt(0);
+              }
+            }
+
+            if (unicodeOrCharCode === undefined) {
+              continue; // No valid glyph mapping found.
+            }
+          }
+
           for (let i = 0; i < cmapMappingsLength; ++i) {
             if (cmapMappings[i].charCode !== unicodeOrCharCode) {
               continue;
@@ -2663,6 +2783,9 @@ class Font {
         for (let i = 0; i < cmapMappingsLength; ++i) {
           charCodeToGlyphId[cmapMappings[i].charCode] = cmapMappings[i].glyphId;
         }
+        // Always prefer the BaseEncoding/Differences arrays, when they exist
+        // (fixes issue13433.pdf).
+        forcePostTable = true;
       } else {
         // When there is only a (1, 0) cmap table, the char code is a single
         // byte and it is used directly as the char code.
@@ -2694,7 +2817,7 @@ class Font {
         (baseEncoding.length || this.differences.length)
       ) {
         for (let i = 0; i < 256; ++i) {
-          if (charCodeToGlyphId[i] !== undefined) {
+          if (!forcePostTable && charCodeToGlyphId[i] !== undefined) {
             continue;
           }
           const glyphName = this.differences[i] || baseEncoding[i];
@@ -3001,6 +3124,10 @@ class Font {
       let charcode = 0;
       if (this.composite && this.cMap.contains(glyphUnicode)) {
         charcode = this.cMap.lookup(glyphUnicode);
+
+        if (typeof charcode === "string") {
+          charcode = convertCidString(glyphUnicode, charcode);
+        }
       }
       // ... via toUnicode map
       if (!charcode && this.toUnicode) {
@@ -3029,6 +3156,10 @@ class Font {
     let widthCode = charcode;
     if (this.cMap && this.cMap.contains(charcode)) {
       widthCode = this.cMap.lookup(charcode);
+
+      if (typeof widthCode === "string") {
+        widthCode = convertCidString(charcode, widthCode);
+      }
     }
     width = this.widths[widthCode];
     width = isNum(width) ? width : this.defaultWidth;
@@ -3199,6 +3330,11 @@ class Font {
     // and currentBuf contains non-encoded chars.
     const hasCurrentBufErrors = () => buffers.length % 2 === 1;
 
+    const getCharCode =
+      this.toUnicode instanceof IdentityToUnicodeMap
+        ? unicode => this.toUnicode.charCodeOf(unicode)
+        : unicode => this.toUnicode.charCodeOf(String.fromCodePoint(unicode));
+
     for (let i = 0, ii = str.length; i < ii; i++) {
       const unicode = str.codePointAt(i);
       if (unicode > 0xd7ff && (unicode < 0xe000 || unicode > 0xfffd)) {
@@ -3206,8 +3342,7 @@ class Font {
         i++;
       }
       if (this.toUnicode) {
-        const char = String.fromCodePoint(unicode);
-        const charCode = this.toUnicode.charCodeOf(char);
+        const charCode = getCharCode(unicode);
         if (charCode !== -1) {
           if (hasCurrentBufErrors()) {
             buffers.push(currentBuf.join(""));

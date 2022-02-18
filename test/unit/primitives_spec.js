@@ -16,10 +16,8 @@
 import {
   Cmd,
   Dict,
-  EOF,
   isCmd,
   isDict,
-  isEOF,
   isName,
   isRef,
   isRefsEqual,
@@ -89,7 +87,7 @@ describe("primitives", function () {
     const checkInvalidKeyValues = function (dict) {
       expect(dict.get()).toBeUndefined();
       expect(dict.get("Prev")).toBeUndefined();
-      expect(dict.get("Decode", "D")).toBeUndefined();
+      expect(dict.get("D", "Decode")).toBeUndefined();
       expect(dict.get("FontFile", "FontFile2", "FontFile3")).toBeUndefined();
     };
 
@@ -470,17 +468,6 @@ describe("primitives", function () {
         values.push(value);
       });
       expect(values).toEqual([obj1, obj2]);
-    });
-  });
-
-  describe("isEOF", function () {
-    it("handles non-EOF", function () {
-      const nonEOF = "foo";
-      expect(isEOF(nonEOF)).toEqual(false);
-    });
-
-    it("handles EOF", function () {
-      expect(isEOF(EOF)).toEqual(true);
     });
   });
 

@@ -13,9 +13,14 @@
  * limitations under the License.
  */
 
-import { getOutputScale } from "./ui_utils.js";
+/** @typedef {import("./interfaces").IL10n} IL10n */
+/** @typedef {import("./interfaces").IPDFLinkService} IPDFLinkService */
+/** @typedef {import("./interfaces").IRenderableView} IRenderableView */
+// eslint-disable-next-line max-len
+/** @typedef {import("./pdf_rendering_queue").PDFRenderingQueue} PDFRenderingQueue */
+
+import { getOutputScale, RenderingStates } from "./ui_utils.js";
 import { RenderingCancelledException } from "pdfjs-lib";
-import { RenderingStates } from "./pdf_rendering_queue.js";
 
 const DRAW_UPSCALE_FACTOR = 2; // See comment in `PDFThumbnailView.draw` below.
 const MAX_NUM_SCALING_STEPS = 3;
@@ -36,48 +41,42 @@ const THUMBNAIL_WIDTH = 98; // px
  * @property {IL10n} l10n - Localization service.
  */
 
-const TempImageFactory = (function TempImageFactoryClosure() {
-  let tempCanvasCache = null;
+class TempImageFactory {
+  static #tempCanvas = null;
 
-  return {
-    getCanvas(width, height) {
-      let tempCanvas = tempCanvasCache;
-      if (!tempCanvas) {
-        tempCanvas = document.createElement("canvas");
-        tempCanvasCache = tempCanvas;
-      }
-      tempCanvas.width = width;
-      tempCanvas.height = height;
+  static getCanvas(width, height) {
+    const tempCanvas = (this.#tempCanvas ||= document.createElement("canvas"));
+    tempCanvas.width = width;
+    tempCanvas.height = height;
 
-      // Since this is a temporary canvas, we need to fill it with a white
-      // background ourselves. `_getPageDrawContext` uses CSS rules for this.
-      if (
-        typeof PDFJSDev === "undefined" ||
-        PDFJSDev.test("MOZCENTRAL || GENERIC")
-      ) {
-        tempCanvas.mozOpaque = true;
-      }
+    // Since this is a temporary canvas, we need to fill it with a white
+    // background ourselves. `_getPageDrawContext` uses CSS rules for this.
+    if (
+      typeof PDFJSDev === "undefined" ||
+      PDFJSDev.test("MOZCENTRAL || GENERIC")
+    ) {
+      tempCanvas.mozOpaque = true;
+    }
 
-      const ctx = tempCanvas.getContext("2d", { alpha: false });
-      ctx.save();
-      ctx.fillStyle = "rgb(255, 255, 255)";
-      ctx.fillRect(0, 0, width, height);
-      ctx.restore();
-      return [tempCanvas, tempCanvas.getContext("2d")];
-    },
+    const ctx = tempCanvas.getContext("2d", { alpha: false });
+    ctx.save();
+    ctx.fillStyle = "rgb(255, 255, 255)";
+    ctx.fillRect(0, 0, width, height);
+    ctx.restore();
+    return [tempCanvas, tempCanvas.getContext("2d")];
+  }
 
-    destroyCanvas() {
-      const tempCanvas = tempCanvasCache;
-      if (tempCanvas) {
-        // Zeroing the width and height causes Firefox to release graphics
-        // resources immediately, which can greatly reduce memory consumption.
-        tempCanvas.width = 0;
-        tempCanvas.height = 0;
-      }
-      tempCanvasCache = null;
-    },
-  };
-})();
+  static destroyCanvas() {
+    const tempCanvas = this.#tempCanvas;
+    if (tempCanvas) {
+      // Zeroing the width and height causes Firefox to release graphics
+      // resources immediately, which can greatly reduce memory consumption.
+      tempCanvas.width = 0;
+      tempCanvas.height = 0;
+    }
+    this.#tempCanvas = null;
+  }
+}
 
 /**
  * @implements {IRenderableView}
@@ -195,9 +194,9 @@ class PDFThumbnailView {
     }
   }
 
-  update(rotation) {
-    if (typeof rotation !== "undefined") {
-      this.rotation = rotation;
+  update({ rotation = null }) {
+    if (typeof rotation === "number") {
+      this.rotation = rotation; // The rotation may be zero.
     }
     const totalRotation = (this.rotation + this.pdfPageRotate) % 360;
     this.viewport = this.viewport.clone({
@@ -278,7 +277,7 @@ class PDFThumbnailView {
   draw() {
     if (this.renderingState !== RenderingStates.INITIAL) {
       console.error("Must be in new state before drawing");
-      return Promise.resolve(undefined);
+      return Promise.resolve();
     }
     const { pdfPage } = this;
 

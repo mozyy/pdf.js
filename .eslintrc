@@ -1,6 +1,6 @@
 {
   "parserOptions": {
-    "ecmaVersion": 2021,
+    "ecmaVersion": 2022,
     "sourceType": "module",
   },
 
@@ -46,7 +46,11 @@
     }],
     "unicorn/no-abusive-eslint-disable": "error",
     "unicorn/no-array-push-push": "error",
+    "unicorn/no-new-buffer": "error",
     "unicorn/no-instanceof-array": "error",
+    "unicorn/no-useless-spread": "error",
+    "unicorn/prefer-date-now": "error",
+    "unicorn/prefer-dom-node-remove": "error",
     "unicorn/prefer-string-starts-ends-with": "error",
 
     // Possible errors
@@ -68,6 +72,7 @@
     "no-inner-declarations": ["error", "functions"],
     "no-invalid-regexp": "error",
     "no-irregular-whitespace": "error",
+    "no-loss-of-precision": "error",
     "no-obj-calls": "error",
     "no-promise-executor-return": "error",
     "no-regex-spaces": "error",
@@ -79,6 +84,7 @@
     "no-unsafe-finally": "error",
     "no-unsafe-negation": "error",
     "no-unsafe-optional-chaining": ["error", { "disallowArithmeticOperators": true }],
+    "no-unused-private-class-members": "error",
     "use-isnan": ["error", { "enforceForIndexOf": true, }],
     "valid-typeof": ["error", { "requireStringLiterals": true, }],
 
@@ -135,7 +141,6 @@
     "strict": ["off", "global"],
 
     // Variables
-    "no-catch-shadow": "error",
     "no-delete-var": "error",
     "no-label-var": "error",
     "no-shadow": "error",
@@ -151,9 +156,6 @@
       "classes": false,
       "variables": false,
     }],
-
-    // Node.js and CommonJS
-    "no-buffer-constructor": "error",
 
     // Stylistic Issues
     "lines-between-class-members": ["error", "always"],

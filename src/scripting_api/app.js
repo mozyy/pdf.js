@@ -21,8 +21,8 @@ import { Thermometer } from "./thermometer.js";
 
 const VIEWER_TYPE = "PDF.js";
 const VIEWER_VARIATION = "Full";
-const VIEWER_VERSION = "10.0";
-const FORMS_VERSION = undefined;
+const VIEWER_VERSION = 21.00720099;
+const FORMS_VERSION = 21.00720099;
 
 class App extends PDFObject {
   constructor(data) {
@@ -479,8 +479,24 @@ class App extends PDFObject {
     /* Not implemented */
   }
 
-  execMenuItem() {
-    /* Not implemented */
+  execMenuItem(item) {
+    switch (item) {
+      case "SaveAs":
+      case "FirstPage":
+      case "LastPage":
+      case "NextPage":
+      case "PrevPage":
+      case "ZoomViewIn":
+      case "ZoomViewOut":
+        this._send({ command: item });
+        break;
+      case "FitPage":
+        this._send({ command: "zoom", value: "page-fit" });
+        break;
+      case "Print":
+        this._send({ command: "print" });
+        break;
+    }
   }
 
   getNthPlugInName() {

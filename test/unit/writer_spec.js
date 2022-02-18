@@ -114,6 +114,11 @@ describe("Writer", function () {
       gdict.set("I", stream);
 
       dict.set("G", gdict);
+      dict.set("J", true);
+      dict.set("K", false);
+
+      dict.set("NullArr", [null, 10]);
+      dict.set("NullVal", null);
 
       const buffer = [];
       writeDict(dict, buffer, null);
@@ -123,7 +128,8 @@ describe("Writer", function () {
         "/E (\\(hello\\\\world\\)) /F [1.23 4.5 6] " +
         "/G << /H 123 /I << /Length 8>> stream\n" +
         "a stream\n" +
-        "endstream\n>>>>";
+        "endstream\n>> /J true /K false " +
+        "/NullArr [null 10] /NullVal null>>";
 
       expect(buffer.join("")).toEqual(expected);
     });
@@ -140,6 +146,70 @@ describe("Writer", function () {
       const expected = "<< /#feA#23 /hello /B /#23hello /C /he#fello#ff>>";
 
       expect(buffer.join("")).toEqual(expected);
+    });
+  });
+
+  describe("XFA", function () {
+    it("should update AcroForm when no datasets in XFA array", function () {
+      const originalData = new Uint8Array();
+      const newRefs = [];
+
+      const acroForm = new Dict(null);
+      acroForm.set("XFA", [
+        "preamble",
+        Ref.get(123, 0),
+        "postamble",
+        Ref.get(456, 0),
+      ]);
+      const acroFormRef = Ref.get(789, 0);
+      const xfaDatasetsRef = Ref.get(101112, 0);
+      const xfaData = "<hello>world</hello>";
+
+      const xrefInfo = {
+        newRef: Ref.get(131415, 0),
+        startXRef: 314,
+        fileIds: null,
+        rootRef: null,
+        infoRef: null,
+        encryptRef: null,
+        filename: "foo.pdf",
+        info: {},
+      };
+
+      let data = incrementalUpdate({
+        originalData,
+        xrefInfo,
+        newRefs,
+        hasXfa: true,
+        xfaDatasetsRef,
+        hasXfaDatasetsEntry: false,
+        acroFormRef,
+        acroForm,
+        xfaData,
+        xref: {},
+      });
+      data = bytesToString(data);
+
+      const expected =
+        "\n" +
+        "789 0 obj\n" +
+        "<< /XFA [(preamble) 123 0 R (datasets) 101112 0 R (postamble) 456 0 R]>>\n" +
+        "101112 0 obj\n" +
+        "<< /Type /EmbeddedFile /Length 20>>\n" +
+        "stream\n" +
+        "<hello>world</hello>\n" +
+        "endstream\n" +
+        "endobj\n" +
+        "131415 0 obj\n" +
+        "<< /Size 131416 /Prev 314 /Type /XRef /Index [0 1 789 1 101112 1 131415 1] /W [1 1 2] /Length 16>> stream\n" +
+        "\u0000\u0001ÿÿ\u0001\u0001\u0000\u0000\u0001T\u0000\u0000\u0001²\u0000\u0000\n" +
+        "endstream\n" +
+        "endobj\n" +
+        "startxref\n" +
+        "178\n" +
+        "%%EOF\n";
+
+      expect(data).toEqual(expected);
     });
   });
 });

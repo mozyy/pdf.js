@@ -18,18 +18,22 @@ import { readUint16 } from "./core_utils.js";
 
 class JpegError extends BaseException {
   constructor(msg) {
-    super(`JPEG error: ${msg}`);
+    super(`JPEG error: ${msg}`, "JpegError");
   }
 }
 
 class DNLMarkerError extends BaseException {
   constructor(message, scanLines) {
-    super(message);
+    super(message, "DNLMarkerError");
     this.scanLines = scanLines;
   }
 }
 
-class EOIMarkerError extends BaseException {}
+class EOIMarkerError extends BaseException {
+  constructor(msg) {
+    super(msg, "EOIMarkerError");
+  }
+}
 
 /**
  * This code was forked from https://github.com/notmasteryet/jpgjs.
@@ -1345,7 +1349,7 @@ class JpegImage {
           (0.00006834815998235662 * y +
             0.00015168452363460973 * k -
             0.09751927774728933) -
-        k * (0.00031891311758832814 * k + 0.7364883807733168);
+        k * (0.0003189131175883281 * k + 0.7364883807733168);
 
       data[offset++] =
         255 +

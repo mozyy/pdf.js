@@ -14,11 +14,7 @@
  */
 
 import {
-  buildGetDocumentParams,
-  DefaultFileReaderFactory,
-  TEST_PDFS_PATH,
-} from "./test_utils.js";
-import {
+  AnnotationMode,
   createPromiseCapability,
   FontType,
   ImageKind,
@@ -29,14 +25,22 @@ import {
   PasswordResponses,
   PermissionFlag,
   StreamType,
+  UnknownErrorException,
 } from "../../src/shared/util.js";
+import {
+  buildGetDocumentParams,
+  DefaultFileReaderFactory,
+  TEST_PDFS_PATH,
+} from "./test_utils.js";
 import {
   DefaultCanvasFactory,
   getDocument,
   PDFDataRangeTransport,
+  PDFDocumentLoadingTask,
   PDFDocumentProxy,
   PDFPageProxy,
   PDFWorker,
+  RenderTask,
 } from "../../src/display/api.js";
 import {
   RenderingCancelledException,
@@ -70,10 +74,15 @@ describe("api", function () {
     }, WAIT_TIMEOUT);
   }
 
+  function mergeText(items) {
+    return items.map(chunk => chunk.str + (chunk.hasEOL ? "\n" : "")).join("");
+  }
+
   describe("getDocument", function () {
     it("creates pdf doc from URL-string", async function () {
       const urlStr = TEST_PDFS_PATH + basicApiFileName;
       const loadingTask = getDocument(urlStr);
+      expect(loadingTask instanceof PDFDocumentLoadingTask).toEqual(true);
       const pdfDocument = await loadingTask.promise;
 
       expect(typeof urlStr).toEqual("string");
@@ -92,6 +101,7 @@ describe("api", function () {
         window.location
       );
       const loadingTask = getDocument(urlObj);
+      expect(loadingTask instanceof PDFDocumentLoadingTask).toEqual(true);
       const pdfDocument = await loadingTask.promise;
 
       expect(urlObj instanceof URL).toEqual(true);
@@ -103,6 +113,7 @@ describe("api", function () {
 
     it("creates pdf doc from URL", async function () {
       const loadingTask = getDocument(basicApiGetDocumentParams);
+      expect(loadingTask instanceof PDFDocumentLoadingTask).toEqual(true);
 
       const progressReportedCapability = createPromiseCapability();
       // Attach the callback that is used to report loading progress;
@@ -127,6 +138,7 @@ describe("api", function () {
 
     it("creates pdf doc from URL and aborts before worker initialized", async function () {
       const loadingTask = getDocument(basicApiGetDocumentParams);
+      expect(loadingTask instanceof PDFDocumentLoadingTask).toEqual(true);
       const destroyed = loadingTask.destroy();
 
       try {
@@ -142,6 +154,7 @@ describe("api", function () {
 
     it("creates pdf doc from URL and aborts loading after worker initialized", async function () {
       const loadingTask = getDocument(basicApiGetDocumentParams);
+      expect(loadingTask instanceof PDFDocumentLoadingTask).toEqual(true);
       // This can be somewhat random -- we cannot guarantee perfect
       // 'Terminate' message to the worker before/after setting up pdfManager.
       const destroyed = loadingTask._worker.promise.then(function () {
@@ -161,6 +174,7 @@ describe("api", function () {
       expect(typedArrayPdf.length).toEqual(basicApiFileLength);
 
       const loadingTask = getDocument(typedArrayPdf);
+      expect(loadingTask instanceof PDFDocumentLoadingTask).toEqual(true);
 
       const progressReportedCapability = createPromiseCapability();
       loadingTask.onProgress = function (data) {
@@ -180,6 +194,7 @@ describe("api", function () {
     it("creates pdf doc from invalid PDF file", async function () {
       // A severely corrupt PDF file (even Adobe Reader fails to open it).
       const loadingTask = getDocument(buildGetDocumentParams("bug1020226.pdf"));
+      expect(loadingTask instanceof PDFDocumentLoadingTask).toEqual(true);
 
       try {
         await loadingTask.promise;
@@ -202,6 +217,7 @@ describe("api", function () {
       const loadingTask = getDocument(
         buildGetDocumentParams("non-existent.pdf")
       );
+      expect(loadingTask instanceof PDFDocumentLoadingTask).toEqual(true);
 
       try {
         await loadingTask.promise;
@@ -217,6 +233,7 @@ describe("api", function () {
 
     it("creates pdf doc from PDF file protected with user and owner password", async function () {
       const loadingTask = getDocument(buildGetDocumentParams("pr6531_1.pdf"));
+      expect(loadingTask instanceof PDFDocumentLoadingTask).toEqual(true);
 
       const passwordNeededCapability = createPromiseCapability();
       const passwordIncorrectCapability = createPromiseCapability();
@@ -263,6 +280,10 @@ describe("api", function () {
           password: "",
         })
       );
+      expect(
+        passwordNeededLoadingTask instanceof PDFDocumentLoadingTask
+      ).toEqual(true);
+
       const result1 = passwordNeededLoadingTask.promise.then(
         function () {
           // Shouldn't get here.
@@ -281,6 +302,10 @@ describe("api", function () {
           password: "qwerty",
         })
       );
+      expect(
+        passwordIncorrectLoadingTask instanceof PDFDocumentLoadingTask
+      ).toEqual(true);
+
       const result2 = passwordIncorrectLoadingTask.promise.then(
         function () {
           // Shouldn't get here.
@@ -299,6 +324,10 @@ describe("api", function () {
           password: "asdfasdf",
         })
       );
+      expect(
+        passwordAcceptedLoadingTask instanceof PDFDocumentLoadingTask
+      ).toEqual(true);
+
       const result3 = passwordAcceptedLoadingTask.promise.then(function (data) {
         expect(data instanceof PDFDocumentProxy).toEqual(true);
         return passwordAcceptedLoadingTask.destroy();
@@ -316,11 +345,18 @@ describe("api", function () {
         const passwordNeededLoadingTask = getDocument(
           buildGetDocumentParams(filename)
         );
+        expect(
+          passwordNeededLoadingTask instanceof PDFDocumentLoadingTask
+        ).toEqual(true);
+
         const passwordIncorrectLoadingTask = getDocument(
           buildGetDocumentParams(filename, {
             password: "qwerty",
           })
         );
+        expect(
+          passwordIncorrectLoadingTask instanceof PDFDocumentLoadingTask
+        ).toEqual(true);
 
         let passwordNeededDestroyed;
         passwordNeededLoadingTask.onPassword = function (callback, reason) {
@@ -370,6 +406,7 @@ describe("api", function () {
 
     it("creates pdf doc from empty typed array", async function () {
       const loadingTask = getDocument(new Uint8Array(0));
+      expect(loadingTask instanceof PDFDocumentLoadingTask).toEqual(true);
 
       try {
         await loadingTask.promise;
@@ -384,6 +421,224 @@ describe("api", function () {
       }
 
       await loadingTask.destroy();
+    });
+
+    it("checks that `docId`s are unique and increasing", async function () {
+      const loadingTask1 = getDocument(basicApiGetDocumentParams);
+      expect(loadingTask1 instanceof PDFDocumentLoadingTask).toEqual(true);
+      await loadingTask1.promise;
+      const docId1 = loadingTask1.docId;
+
+      const loadingTask2 = getDocument(basicApiGetDocumentParams);
+      expect(loadingTask2 instanceof PDFDocumentLoadingTask).toEqual(true);
+      await loadingTask2.promise;
+      const docId2 = loadingTask2.docId;
+
+      expect(docId1).not.toEqual(docId2);
+
+      const docIdRegExp = /^d(\d+)$/,
+        docNum1 = docIdRegExp.exec(docId1)?.[1],
+        docNum2 = docIdRegExp.exec(docId2)?.[1];
+
+      expect(+docNum1).toBeLessThan(+docNum2);
+
+      await Promise.all([loadingTask1.destroy(), loadingTask2.destroy()]);
+    });
+
+    it("creates pdf doc from PDF file with bad XRef entry", async function () {
+      // A corrupt PDF file, where the XRef table have (some) bogus entries.
+      const loadingTask = getDocument(
+        buildGetDocumentParams("PDFBOX-4352-0.pdf", {
+          rangeChunkSize: 100,
+        })
+      );
+      expect(loadingTask instanceof PDFDocumentLoadingTask).toEqual(true);
+
+      const pdfDocument = await loadingTask.promise;
+      expect(pdfDocument.numPages).toEqual(1);
+
+      const page = await pdfDocument.getPage(1);
+      expect(page instanceof PDFPageProxy).toEqual(true);
+
+      const opList = await page.getOperatorList();
+      expect(opList.fnArray.length).toEqual(0);
+      expect(opList.argsArray.length).toEqual(0);
+      expect(opList.lastChunk).toEqual(true);
+
+      await loadingTask.destroy();
+    });
+
+    it("creates pdf doc from PDF file with bad XRef header", async function () {
+      const loadingTask = getDocument(
+        buildGetDocumentParams("GHOSTSCRIPT-698804-1-fuzzed.pdf")
+      );
+      expect(loadingTask instanceof PDFDocumentLoadingTask).toEqual(true);
+
+      const pdfDocument = await loadingTask.promise;
+      expect(pdfDocument.numPages).toEqual(1);
+
+      const page = await pdfDocument.getPage(1);
+      expect(page instanceof PDFPageProxy).toEqual(true);
+
+      const opList = await page.getOperatorList();
+      expect(opList.fnArray.length).toEqual(0);
+      expect(opList.argsArray.length).toEqual(0);
+      expect(opList.lastChunk).toEqual(true);
+
+      await loadingTask.destroy();
+    });
+
+    it("creates pdf doc from PDF file with bad XRef byteWidths", async function () {
+      // A corrupt PDF file, where the XRef /W-array have (some) bogus entries.
+      const loadingTask = getDocument(
+        buildGetDocumentParams("REDHAT-1531897-0.pdf")
+      );
+      expect(loadingTask instanceof PDFDocumentLoadingTask).toEqual(true);
+
+      try {
+        await loadingTask.promise;
+
+        // Shouldn't get here.
+        expect(false).toEqual(true);
+      } catch (reason) {
+        expect(reason instanceof InvalidPDFException).toEqual(true);
+        expect(reason.message).toEqual("Invalid PDF structure.");
+      }
+
+      await loadingTask.destroy();
+    });
+
+    it("creates pdf doc from PDF file with inaccessible /Pages tree", async function () {
+      const loadingTask = getDocument(
+        buildGetDocumentParams("poppler-395-0-fuzzed.pdf")
+      );
+      expect(loadingTask instanceof PDFDocumentLoadingTask).toEqual(true);
+
+      try {
+        await loadingTask.promise;
+
+        // Shouldn't get here.
+        expect(false).toEqual(true);
+      } catch (reason) {
+        expect(reason instanceof InvalidPDFException).toEqual(true);
+        expect(reason.message).toEqual("Invalid Root reference.");
+      }
+
+      await loadingTask.destroy();
+    });
+
+    it("creates pdf doc from PDF files, with bad /Pages tree /Count", async function () {
+      const loadingTask1 = getDocument(
+        buildGetDocumentParams("poppler-67295-0.pdf")
+      );
+      const loadingTask2 = getDocument(
+        buildGetDocumentParams("poppler-85140-0.pdf")
+      );
+
+      expect(loadingTask1 instanceof PDFDocumentLoadingTask).toEqual(true);
+      expect(loadingTask2 instanceof PDFDocumentLoadingTask).toEqual(true);
+
+      const pdfDocument1 = await loadingTask1.promise;
+      const pdfDocument2 = await loadingTask2.promise;
+
+      expect(pdfDocument1.numPages).toEqual(1);
+      expect(pdfDocument2.numPages).toEqual(1);
+
+      const page = await pdfDocument1.getPage(1);
+      expect(page instanceof PDFPageProxy).toEqual(true);
+
+      const opList = await page.getOperatorList();
+      expect(opList.fnArray.length).toBeGreaterThan(5);
+      expect(opList.argsArray.length).toBeGreaterThan(5);
+      expect(opList.lastChunk).toEqual(true);
+
+      try {
+        await pdfDocument2.getPage(1);
+
+        // Shouldn't get here.
+        expect(false).toEqual(true);
+      } catch (reason) {
+        expect(reason instanceof UnknownErrorException).toEqual(true);
+        expect(reason.message).toEqual("Bad (uncompressed) XRef entry: 3R");
+      }
+
+      await Promise.all([loadingTask1.destroy(), loadingTask2.destroy()]);
+    });
+
+    it("creates pdf doc from PDF files, with circular references", async function () {
+      const loadingTask1 = getDocument(
+        buildGetDocumentParams("poppler-91414-0-53.pdf")
+      );
+      const loadingTask2 = getDocument(
+        buildGetDocumentParams("poppler-91414-0-54.pdf")
+      );
+      expect(loadingTask1 instanceof PDFDocumentLoadingTask).toEqual(true);
+      expect(loadingTask2 instanceof PDFDocumentLoadingTask).toEqual(true);
+
+      const pdfDocument1 = await loadingTask1.promise;
+      const pdfDocument2 = await loadingTask2.promise;
+
+      expect(pdfDocument1.numPages).toEqual(1);
+      expect(pdfDocument2.numPages).toEqual(1);
+
+      const pageA = await pdfDocument1.getPage(1);
+      const pageB = await pdfDocument2.getPage(1);
+
+      expect(pageA instanceof PDFPageProxy).toEqual(true);
+      expect(pageB instanceof PDFPageProxy).toEqual(true);
+
+      for (const opList of [
+        await pageA.getOperatorList(),
+        await pageB.getOperatorList(),
+      ]) {
+        expect(opList.fnArray.length).toBeGreaterThan(5);
+        expect(opList.argsArray.length).toBeGreaterThan(5);
+        expect(opList.lastChunk).toEqual(true);
+      }
+
+      await Promise.all([loadingTask1.destroy(), loadingTask2.destroy()]);
+    });
+
+    it("creates pdf doc from PDF files, with bad /Pages tree /Kids entries", async function () {
+      const loadingTask1 = getDocument(
+        buildGetDocumentParams("poppler-742-0-fuzzed.pdf")
+      );
+      const loadingTask2 = getDocument(
+        buildGetDocumentParams("poppler-937-0-fuzzed.pdf")
+      );
+      expect(loadingTask1 instanceof PDFDocumentLoadingTask).toEqual(true);
+      expect(loadingTask2 instanceof PDFDocumentLoadingTask).toEqual(true);
+
+      const pdfDocument1 = await loadingTask1.promise;
+      const pdfDocument2 = await loadingTask2.promise;
+
+      expect(pdfDocument1.numPages).toEqual(1);
+      expect(pdfDocument2.numPages).toEqual(1);
+
+      try {
+        await pdfDocument1.getPage(1);
+
+        // Shouldn't get here.
+        expect(false).toEqual(true);
+      } catch (reason) {
+        expect(reason instanceof UnknownErrorException).toEqual(true);
+        expect(reason.message).toEqual(
+          "Page dictionary kids object is not an array."
+        );
+      }
+      try {
+        await pdfDocument2.getPage(1);
+
+        // Shouldn't get here.
+        expect(false).toEqual(true);
+      } catch (reason) {
+        expect(reason instanceof UnknownErrorException).toEqual(true);
+        expect(reason.message).toEqual(
+          "Page dictionary kids object is not an array."
+        );
+      }
+
+      await Promise.all([loadingTask1.destroy(), loadingTask2.destroy()]);
     });
   });
 
@@ -481,7 +736,7 @@ describe("api", function () {
         pending("Worker is not supported in Node.js.");
       }
 
-      const workerSrc = PDFWorker.getWorkerSrc();
+      const workerSrc = PDFWorker.workerSrc;
       expect(typeof workerSrc).toEqual("string");
       expect(workerSrc).toEqual(GlobalWorkerOptions.workerSrc);
     });
@@ -590,7 +845,7 @@ describe("api", function () {
             throw new Error("shall fail for invalid page");
           },
           function (reason) {
-            expect(reason instanceof Error).toEqual(true);
+            expect(reason instanceof UnknownErrorException).toEqual(true);
             expect(reason.message).toEqual(
               "Pages tree contains circular reference."
             );
@@ -600,6 +855,20 @@ describe("api", function () {
 
       await Promise.all([page1, page2]);
       await loadingTask.destroy();
+    });
+
+    it("gets page multiple time, with working caches", async function () {
+      const promiseA = pdfDocument.getPage(1);
+      const promiseB = pdfDocument.getPage(1);
+
+      expect(promiseA instanceof Promise).toEqual(true);
+      expect(promiseA).toBe(promiseB);
+
+      const pageA = await promiseA;
+      const pageB = await promiseB;
+
+      expect(pageA instanceof PDFPageProxy).toEqual(true);
+      expect(pageA).toBe(pageB);
     });
 
     it("gets page index", async function () {
@@ -617,7 +886,10 @@ describe("api", function () {
         // Shouldn't get here.
         expect(false).toEqual(true);
       } catch (reason) {
-        expect(reason instanceof Error).toEqual(true);
+        expect(reason instanceof UnknownErrorException).toEqual(true);
+        expect(reason.message).toEqual(
+          "The reference does not point to a /Page dictionary."
+        );
       }
     });
 
@@ -1044,6 +1316,19 @@ describe("api", function () {
       await loadingTask.destroy();
     });
 
+    it("gets outline with non-displayable chars", async function () {
+      const loadingTask = getDocument(buildGetDocumentParams("issue14267.pdf"));
+      const pdfDoc = await loadingTask.promise;
+      const outline = await pdfDoc.getOutline();
+      expect(Array.isArray(outline)).toEqual(true);
+      expect(outline.length).toEqual(1);
+
+      const outlineItem = outline[0];
+      expect(outlineItem.title).toEqual("hello\x11world");
+
+      await loadingTask.destroy();
+    });
+
     it("gets non-existent permissions", async function () {
       const permissions = await pdfDocument.getPermissions();
       expect(permissions).toEqual(null);
@@ -1107,6 +1392,8 @@ describe("api", function () {
       expect(info.Custom).toEqual(undefined);
       // The following are PDF.js specific, non-standard, properties.
       expect(info.PDFFormatVersion).toEqual("1.7");
+      expect(info.Language).toEqual("en");
+      expect(info.EncryptFilterName).toEqual(null);
       expect(info.IsLinearized).toEqual(false);
       expect(info.IsAcroFormPresent).toEqual(false);
       expect(info.IsXFAPresent).toEqual(false);
@@ -1141,6 +1428,8 @@ describe("api", function () {
       );
       // The following are PDF.js specific, non-standard, properties.
       expect(info.PDFFormatVersion).toEqual("1.4");
+      expect(info.Language).toEqual(null);
+      expect(info.EncryptFilterName).toEqual(null);
       expect(info.IsLinearized).toEqual(false);
       expect(info.IsAcroFormPresent).toEqual(false);
       expect(info.IsXFAPresent).toEqual(false);
@@ -1160,8 +1449,12 @@ describe("api", function () {
       const { info, metadata, contentDispositionFilename, contentLength } =
         await pdfDoc.getMetadata();
 
+      // Custom, non-standard, information dictionary entries.
+      expect(info.Custom).toEqual(undefined);
       // The following are PDF.js specific, non-standard, properties.
       expect(info.PDFFormatVersion).toEqual(null);
+      expect(info.Language).toEqual(null);
+      expect(info.EncryptFilterName).toEqual(null);
       expect(info.IsLinearized).toEqual(false);
       expect(info.IsAcroFormPresent).toEqual(false);
       expect(info.IsXFAPresent).toEqual(false);
@@ -1171,6 +1464,33 @@ describe("api", function () {
       expect(metadata).toEqual(null);
       expect(contentDispositionFilename).toEqual(null);
       expect(contentLength).toEqual(624);
+
+      await loadingTask.destroy();
+    });
+
+    it("gets metadata, with corrupt /Metadata XRef entry", async function () {
+      const loadingTask = getDocument(
+        buildGetDocumentParams("PDFBOX-3148-2-fuzzed.pdf")
+      );
+      const pdfDoc = await loadingTask.promise;
+      const { info, metadata, contentDispositionFilename, contentLength } =
+        await pdfDoc.getMetadata();
+
+      // Custom, non-standard, information dictionary entries.
+      expect(info.Custom).toEqual(undefined);
+      // The following are PDF.js specific, non-standard, properties.
+      expect(info.PDFFormatVersion).toEqual("1.6");
+      expect(info.Language).toEqual(null);
+      expect(info.EncryptFilterName).toEqual(null);
+      expect(info.IsLinearized).toEqual(false);
+      expect(info.IsAcroFormPresent).toEqual(true);
+      expect(info.IsXFAPresent).toEqual(false);
+      expect(info.IsCollectionPresent).toEqual(false);
+      expect(info.IsSignaturesPresent).toEqual(false);
+
+      expect(metadata).toEqual(null);
+      expect(contentDispositionFilename).toEqual(null);
+      expect(contentLength).toEqual(244351);
 
       await loadingTask.destroy();
     });
@@ -1198,8 +1518,8 @@ describe("api", function () {
     });
 
     it("gets document stats", async function () {
-      const stats = await pdfDocument.getStats();
-      expect(stats).toEqual({ streamTypes: {}, fontTypes: {} });
+      const stats = pdfDocument.stats;
+      expect(stats).toEqual(null);
     });
 
     it("cleans up document resources", async function () {
@@ -1227,6 +1547,28 @@ describe("api", function () {
       expect(fingerprints2).toEqual(["04c7126b34a46b6d4d6e7a1eff7edcb6", null]);
 
       await Promise.all([loadingTask1.destroy(), loadingTask2.destroy()]);
+    });
+
+    it("write a value in an annotation, save the pdf and load it", async function () {
+      let loadingTask = getDocument(buildGetDocumentParams("evaljs.pdf"));
+      let pdfDoc = await loadingTask.promise;
+      const value = "Hello World";
+
+      pdfDoc.annotationStorage.setValue("55R", { value });
+
+      const data = await pdfDoc.saveDocument();
+      await loadingTask.destroy();
+
+      loadingTask = getDocument(data);
+      pdfDoc = await loadingTask.promise;
+      const pdfPage = await pdfDoc.getPage(1);
+      const annotations = await pdfPage.getAnnotations();
+
+      const field = annotations.find(annotation => annotation.id === "55R");
+      expect(!!field).toEqual(true);
+      expect(field.fieldValue).toEqual(value);
+
+      await loadingTask.destroy();
     });
 
     describe("Cross-origin", function () {
@@ -1423,6 +1765,12 @@ describe("api", function () {
         expect(data.length).toEqual(4);
       });
 
+      const anyPromise = page
+        .getAnnotations({ intent: "any" })
+        .then(function (data) {
+          expect(data.length).toEqual(4);
+        });
+
       const displayPromise = page
         .getAnnotations({ intent: "display" })
         .then(function (data) {
@@ -1435,7 +1783,12 @@ describe("api", function () {
           expect(data.length).toEqual(4);
         });
 
-      await Promise.all([defaultPromise, displayPromise, printPromise]);
+      await Promise.all([
+        defaultPromise,
+        anyPromise,
+        displayPromise,
+        printPromise,
+      ]);
     });
 
     it("gets annotations containing relative URLs (bug 766086)", async function () {
@@ -1517,11 +1870,17 @@ describe("api", function () {
       const data = await Promise.all([defaultPromise, parametersPromise]);
 
       expect(!!data[0].items).toEqual(true);
-      expect(data[0].items.length).toEqual(12);
+      expect(data[0].items.length).toEqual(11);
       expect(!!data[0].styles).toEqual(true);
 
+      const page1 = mergeText(data[0].items);
+      expect(page1).toEqual(`Table Of Content
+Chapter 1 .......................................................... 2
+Paragraph 1.1 ...................................................... 3
+page 1 / 3`);
+
       expect(!!data[1].items).toEqual(true);
-      expect(data[1].items.length).toEqual(7);
+      expect(data[1].items.length).toEqual(6);
       expect(!!data[1].styles).toEqual(true);
     });
 
@@ -1556,6 +1915,151 @@ describe("api", function () {
       await loadingTask.destroy();
     });
 
+    it("gets text content, with no extra spaces (issue 13226)", async function () {
+      const loadingTask = getDocument(buildGetDocumentParams("issue13226.pdf"));
+      const pdfDoc = await loadingTask.promise;
+      const pdfPage = await pdfDoc.getPage(1);
+      const { items } = await pdfPage.getTextContent();
+      const text = mergeText(items);
+
+      expect(text).toEqual(
+        "Mitarbeiterinnen und Mitarbeiter arbeiten in über 100 Ländern engagiert im Dienste"
+      );
+
+      await loadingTask.destroy();
+    });
+
+    it("gets text content, with merged spaces (issue 13201)", async function () {
+      const loadingTask = getDocument(buildGetDocumentParams("issue13201.pdf"));
+      const pdfDoc = await loadingTask.promise;
+      const pdfPage = await pdfDoc.getPage(1);
+      const { items } = await pdfPage.getTextContent();
+      const text = mergeText(items);
+
+      expect(
+        text.includes(
+          "Abstract. A purely peer-to-peer version of electronic cash would allow online"
+        )
+      ).toEqual(true);
+      expect(
+        text.includes(
+          "avoid mediating disputes. The cost of mediation increases transaction costs, limiting the"
+        )
+      ).toEqual(true);
+      expect(
+        text.includes(
+          "system is secure as long as honest nodes collectively control more CPU power than any"
+        )
+      ).toEqual(true);
+
+      await loadingTask.destroy();
+    });
+
+    it("gets text content, with no spaces between letters of words (issue 11913)", async function () {
+      const loadingTask = getDocument(buildGetDocumentParams("issue11913.pdf"));
+      const pdfDoc = await loadingTask.promise;
+      const pdfPage = await pdfDoc.getPage(1);
+      const { items } = await pdfPage.getTextContent();
+      const text = mergeText(items);
+
+      expect(
+        text.includes(
+          "1. The first of these cases arises from the tragic handicap which has blighted the life of the Plaintiff, and from the response of the"
+        )
+      ).toEqual(true);
+      expect(
+        text.includes(
+          "argued in this Court the appeal raises narrower, but important, issues which may be summarised as follows:-"
+        )
+      ).toEqual(true);
+      await loadingTask.destroy();
+    });
+
+    it("gets text content, with merged spaces (issue 10900)", async function () {
+      const loadingTask = getDocument(buildGetDocumentParams("issue10900.pdf"));
+      const pdfDoc = await loadingTask.promise;
+      const pdfPage = await pdfDoc.getPage(1);
+      const { items } = await pdfPage.getTextContent();
+      const text = mergeText(items);
+
+      expect(
+        text.includes(`3 3 3 3
+851.5 854.9 839.3 837.5
+633.6 727.8 789.9 796.2
+1,485.1 1,582.7 1,629.2 1,633.7
+114.2 121.7 125.3 130.7
+13.0x 13.0x 13.0x 12.5x`)
+      ).toEqual(true);
+
+      await loadingTask.destroy();
+    });
+
+    it("gets text content, with spaces (issue 10640)", async function () {
+      const loadingTask = getDocument(buildGetDocumentParams("issue10640.pdf"));
+      const pdfDoc = await loadingTask.promise;
+      const pdfPage = await pdfDoc.getPage(1);
+      const { items } = await pdfPage.getTextContent();
+      const text = mergeText(items);
+
+      expect(
+        text.includes(`Open Sans is a humanist sans serif typeface designed by Steve Matteson.
+Open Sans was designed with an upright stress, open forms and a neu-
+tral, yet friendly appearance. It was optimized for print, web, and mobile
+interfaces, and has excellent legibility characteristics in its letterforms (see
+figure \x81 on the following page). This font is available from the Google Font
+Directory [\x81] as TrueType files licensed under the Apache License version \x82.\x80.
+This package provides support for this font in LATEX. It includes Type \x81
+versions of the fonts, converted for this package using FontForge from its
+sources, for full support with Dvips.`)
+      ).toEqual(true);
+
+      await loadingTask.destroy();
+    });
+
+    it("gets text content, with negative spaces (bug 931481)", async function () {
+      if (isNodeJS) {
+        pending("Linked test-cases are not supported in Node.js.");
+      }
+
+      const loadingTask = getDocument(buildGetDocumentParams("bug931481.pdf"));
+      const pdfDoc = await loadingTask.promise;
+      const pdfPage = await pdfDoc.getPage(1);
+      const { items } = await pdfPage.getTextContent();
+      const text = mergeText(items);
+
+      expect(
+        text.includes(`Kathrin Nachbaur
+Die promovierte Juristin ist 1979 in Graz geboren und aufgewachsen. Nach
+erfolgreichem Studienabschluss mit Fokus auf Europarecht absolvierte sie ein
+Praktikum bei Magna International in Kanada in der Human Resources Abteilung.
+Anschliessend wurde sie geschult in Human Resources, Arbeitsrecht und
+Kommunikation, währenddessen sie auch an ihrem Doktorat im Wirtschaftsrecht
+arbeitete. Seither arbeitete sie bei Magna International als Projekt Manager in der
+Innovationsabteilung. Seit 2009 ist sie Frank Stronachs Büroleiterin in Österreich und
+Kanada. Zusätzlich ist sie seit 2012 Vice President, Business Development der
+Stronach Group und Vizepräsidentin und Institutsleiterin des Stronach Institut für
+sozialökonomische Gerechtigkeit.`)
+      ).toEqual(true);
+
+      await loadingTask.destroy();
+    });
+
+    it("gets text content, with beginbfrange operator handled correctly (bug 1627427)", async function () {
+      const loadingTask = getDocument(
+        buildGetDocumentParams("bug1627427_reduced.pdf")
+      );
+      const pdfDoc = await loadingTask.promise;
+      const pdfPage = await pdfDoc.getPage(1);
+      const { items } = await pdfPage.getTextContent();
+      const text = mergeText(items);
+
+      expect(text).toEqual(
+        "침하게 흐린 품이 눈이 올 듯하더니 눈은 아니 오고 얼다가 만 비가 추"
+      );
+
+      await loadingTask.destroy();
+    });
+
     it("gets empty structure tree", async function () {
       const tree = await page.getStructTree();
 
@@ -1575,6 +2079,7 @@ describe("api", function () {
         children: [
           {
             role: "Document",
+            lang: "en-US",
             children: [
               {
                 role: "H1",
@@ -1708,16 +2213,87 @@ describe("api", function () {
       await loadingTask.destroy();
     });
 
-    it("gets document stats after parsing page", async function () {
-      const stats = await page.getOperatorList().then(function () {
-        return pdfDocument.getStats();
-      });
+    it("gets operator list, with `annotationMode`-option", async function () {
+      const loadingTask = getDocument(buildGetDocumentParams("evaljs.pdf"));
+      const pdfDoc = await loadingTask.promise;
+      const pdfPage = await pdfDoc.getPage(2);
 
-      const expectedStreamTypes = {};
-      expectedStreamTypes[StreamType.FLATE] = true;
-      const expectedFontTypes = {};
-      expectedFontTypes[FontType.TYPE1STANDARD] = true;
-      expectedFontTypes[FontType.CIDFONTTYPE2] = true;
+      pdfDoc.annotationStorage.setValue("30R", { value: "test" });
+      pdfDoc.annotationStorage.setValue("31R", { value: true });
+
+      const opListAnnotDisable = await pdfPage.getOperatorList({
+        annotationMode: AnnotationMode.DISABLE,
+      });
+      expect(opListAnnotDisable.fnArray.length).toEqual(0);
+      expect(opListAnnotDisable.argsArray.length).toEqual(0);
+      expect(opListAnnotDisable.lastChunk).toEqual(true);
+
+      const opListAnnotEnable = await pdfPage.getOperatorList({
+        annotationMode: AnnotationMode.ENABLE,
+      });
+      expect(opListAnnotEnable.fnArray.length).toBeGreaterThan(150);
+      expect(opListAnnotEnable.argsArray.length).toBeGreaterThan(150);
+      expect(opListAnnotEnable.lastChunk).toEqual(true);
+
+      const opListAnnotEnableForms = await pdfPage.getOperatorList({
+        annotationMode: AnnotationMode.ENABLE_FORMS,
+      });
+      expect(opListAnnotEnableForms.fnArray.length).toBeGreaterThan(40);
+      expect(opListAnnotEnableForms.argsArray.length).toBeGreaterThan(40);
+      expect(opListAnnotEnableForms.lastChunk).toEqual(true);
+
+      const opListAnnotEnableStorage = await pdfPage.getOperatorList({
+        annotationMode: AnnotationMode.ENABLE_STORAGE,
+      });
+      expect(opListAnnotEnableStorage.fnArray.length).toBeGreaterThan(170);
+      expect(opListAnnotEnableStorage.argsArray.length).toBeGreaterThan(170);
+      expect(opListAnnotEnableStorage.lastChunk).toEqual(true);
+
+      // Sanity check to ensure that the `annotationMode` is correctly applied.
+      expect(opListAnnotDisable.fnArray.length).toBeLessThan(
+        opListAnnotEnableForms.fnArray.length
+      );
+      expect(opListAnnotEnableForms.fnArray.length).toBeLessThan(
+        opListAnnotEnable.fnArray.length
+      );
+      expect(opListAnnotEnable.fnArray.length).toBeLessThan(
+        opListAnnotEnableStorage.fnArray.length
+      );
+
+      await loadingTask.destroy();
+    });
+
+    it("gets operatorList, with page resources containing corrupt /CCITTFaxDecode data", async function () {
+      const loadingTask = getDocument(
+        buildGetDocumentParams("poppler-90-0-fuzzed.pdf")
+      );
+      expect(loadingTask instanceof PDFDocumentLoadingTask).toEqual(true);
+
+      const pdfDoc = await loadingTask.promise;
+      expect(pdfDoc.numPages).toEqual(16);
+
+      const pdfPage = await pdfDoc.getPage(6);
+      expect(pdfPage instanceof PDFPageProxy).toEqual(true);
+
+      const opList = await pdfPage.getOperatorList();
+      expect(opList.fnArray.length).toBeGreaterThan(25);
+      expect(opList.argsArray.length).toBeGreaterThan(25);
+      expect(opList.lastChunk).toEqual(true);
+
+      await loadingTask.destroy();
+    });
+
+    it("gets document stats after parsing page", async function () {
+      await page.getOperatorList();
+      const stats = pdfDocument.stats;
+
+      const expectedStreamTypes = {
+        [StreamType.FLATE]: true,
+      };
+      const expectedFontTypes = {
+        [FontType.TYPE1STANDARD]: true,
+        [FontType.CIDFONTTYPE2]: true,
+      };
 
       expect(stats).toEqual({
         streamTypes: expectedStreamTypes,
@@ -1760,11 +2336,14 @@ describe("api", function () {
         viewport.width,
         viewport.height
       );
+
       const renderTask = pdfPage.render({
         canvasContext: canvasAndCtx.context,
         canvasFactory: CanvasFactory,
         viewport,
       });
+      expect(renderTask instanceof RenderTask).toEqual(true);
+
       await renderTask.promise;
       const stats = pdfPage.stats;
 
@@ -1797,6 +2376,8 @@ describe("api", function () {
         canvasFactory: CanvasFactory,
         viewport,
       });
+      expect(renderTask instanceof RenderTask).toEqual(true);
+
       renderTask.cancel();
 
       try {
@@ -1825,6 +2406,8 @@ describe("api", function () {
         canvasFactory: CanvasFactory,
         viewport,
       });
+      expect(renderTask instanceof RenderTask).toEqual(true);
+
       renderTask.cancel();
 
       try {
@@ -1841,6 +2424,8 @@ describe("api", function () {
         canvasFactory: CanvasFactory,
         viewport,
       });
+      expect(reRenderTask instanceof RenderTask).toEqual(true);
+
       await reRenderTask.promise;
 
       CanvasFactory.destroy(canvasAndCtx);
@@ -1862,12 +2447,15 @@ describe("api", function () {
         viewport,
         optionalContentConfigPromise,
       });
+      expect(renderTask1 instanceof RenderTask).toEqual(true);
+
       const renderTask2 = page.render({
         canvasContext: canvasAndCtx.context,
         canvasFactory: CanvasFactory,
         viewport,
         optionalContentConfigPromise,
       });
+      expect(renderTask2 instanceof RenderTask).toEqual(true);
 
       await Promise.all([
         renderTask1.promise,
@@ -1900,8 +2488,9 @@ describe("api", function () {
         canvasFactory: CanvasFactory,
         viewport,
       });
-      await renderTask.promise;
+      expect(renderTask instanceof RenderTask).toEqual(true);
 
+      await renderTask.promise;
       await pdfDoc.cleanup();
 
       expect(true).toEqual(true);
@@ -1928,6 +2517,8 @@ describe("api", function () {
         canvasFactory: CanvasFactory,
         viewport,
       });
+      expect(renderTask instanceof RenderTask).toEqual(true);
+
       // Ensure that clean-up runs during rendering.
       renderTask.onContinue = function (cont) {
         waitSome(cont);

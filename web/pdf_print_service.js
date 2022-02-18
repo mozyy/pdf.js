@@ -13,9 +13,10 @@
  * limitations under the License.
  */
 
+import { AnnotationMode, PixelsPerInch } from "pdfjs-lib";
 import { PDFPrintServiceFactory, PDFViewerApplication } from "./app.js";
+import { compatibilityParams } from "./app_options.js";
 import { getXfaHtmlForPrinting } from "./print_utils.js";
-import { viewerCompatibilityParams } from "./viewer_compatibility.js";
 
 let activeService = null;
 let overlayManager = null;
@@ -33,7 +34,7 @@ function renderPage(
   const scratchCanvas = activeService.scratchCanvas;
 
   // The size of the canvas in pixels for printing.
-  const PRINT_UNITS = printResolution / 72.0;
+  const PRINT_UNITS = printResolution / PixelsPerInch.PDF;
   scratchCanvas.width = Math.floor(size.width * PRINT_UNITS);
   scratchCanvas.height = Math.floor(size.height * PRINT_UNITS);
 
@@ -49,7 +50,7 @@ function renderPage(
       transform: [PRINT_UNITS, 0, 0, PRINT_UNITS, 0, 0],
       viewport: pdfPage.getViewport({ scale: 1, rotation: size.rotation }),
       intent: "print",
-      includeAnnotationStorage: true,
+      annotationMode: AnnotationMode.ENABLE_STORAGE,
       optionalContentConfigPromise,
     };
     return pdfPage.render(renderContext).promise;
@@ -177,7 +178,7 @@ PDFPrintService.prototype = {
     const scratchCanvas = this.scratchCanvas;
     if (
       "toBlob" in scratchCanvas &&
-      !viewerCompatibilityParams.disableCreateObjectURL
+      !compatibilityParams.disableCreateObjectURL
     ) {
       scratchCanvas.toBlob(function (blob) {
         img.src = URL.createObjectURL(blob);

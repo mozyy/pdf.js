@@ -147,7 +147,10 @@ function addHTML(node, html, bbox) {
       break;
     }
     case "tb": {
-      extra.width = availableSpace.width;
+      // Even if the subform can possibly take all the available width,
+      // we must compute the final width as it is in order to be able
+      // for example to center the subform within its parent.
+      extra.width = Math.min(availableSpace.width, Math.max(extra.width, w));
       extra.height += h;
       extra.children.push(html);
       break;
@@ -290,13 +293,13 @@ function checkDimensions(node, space) {
               return true;
             }
             if (parent[$extra].numberInLine === 0) {
-              return space.height > 0;
+              return space.height > ERROR;
             }
 
             return false;
           }
 
-          return space.width > 0;
+          return space.width > ERROR;
         }
 
         // No layout failure.
@@ -307,7 +310,7 @@ function checkDimensions(node, space) {
           return Math.round(w - space.width) <= ERROR;
         }
 
-        return space.width > 0;
+        return space.width > ERROR;
       }
 
       // Second attempt: try to put the element on the next line.
@@ -322,14 +325,14 @@ function checkDimensions(node, space) {
       }
 
       if (node.w === "" || Math.round(w - space.width) <= ERROR) {
-        return space.height > 0;
+        return space.height > ERROR;
       }
 
       if (parent[$isThereMoreWidth]()) {
         return false;
       }
 
-      return space.height > 0;
+      return space.height > ERROR;
     case "table":
     case "tb":
       if (node[$getTemplateRoot]()[$extra].noLayoutFailure) {
@@ -345,14 +348,14 @@ function checkDimensions(node, space) {
       // in the provided space and maybe a children won't fit.
 
       if (node.w === "" || Math.round(w - space.width) <= ERROR) {
-        return space.height > 0;
+        return space.height > ERROR;
       }
 
       if (parent[$isThereMoreWidth]()) {
         return false;
       }
 
-      return space.height > 0;
+      return space.height > ERROR;
     case "position":
       if (node[$getTemplateRoot]()[$extra].noLayoutFailure) {
         return true;
