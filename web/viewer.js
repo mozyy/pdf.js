@@ -200,6 +200,38 @@ function webViewerLoad() {
   localStorage.removeItem("pdfjs.history");
   const config = getViewerConfiguration();
 
+  // ------- 可配置滚动条宽度 start-------
+  const searchParams = new URLSearchParams(location.search);
+  const scrollbarWidth = searchParams.get("scrollbar_width");
+  if (scrollbarWidth) {
+    const style = document.createElement("style");
+    // eslint-disable-next-line no-unsanitized/property
+    style.innerHTML = `
+    /*定义滚动条高宽及背景
+    高宽分别对应横竖滚动条的尺寸 scrollbar_width*/
+    ::-webkit-scrollbar {
+      width: ${scrollbarWidth}px;
+      background-color:#F5F5F5;
+    }
+    ::-webkit-scrollbar:active {
+      background-color:#ccc;
+    }
+    /*定义滑块
+     内阴影+圆角*/
+    ::-webkit-scrollbar-thumb
+    {
+      min-height: 40px;
+      border-radius:6px;
+      background-color:#aaa;
+    }
+    ::-webkit-scrollbar-thumb:active {
+      background-color:#555;
+    }
+    `;
+    document.head.appendChild(style);
+  }
+  // ------- 可配置滚动条宽度 end  -------
+
   function setupWebViewJavascriptBridge(callback) {
     // 小程序里面返回空的函数 防止ios下面"未设置业务域名"的错误
     if (navigator.userAgent.includes("miniProgram")) {
@@ -217,7 +249,7 @@ function webViewerLoad() {
     WVJBIframe.src = "https://__bridge_loaded__";
     document.documentElement.appendChild(WVJBIframe);
     setTimeout(function () {
-      document.documentElement.removeChild(WVJBIframe);
+      WVJBIframe.remove();
     }, 0);
   }
 
