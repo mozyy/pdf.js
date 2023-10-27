@@ -15,7 +15,7 @@
 
 import { getPdfFilenameFromUrl, loadScript } from "pdfjs-lib";
 
-async function docPropertiesLookup(pdfDocument) {
+async function docProperties(pdfDocument) {
   const url = "",
     baseUrl = url.split("#")[0];
   // eslint-disable-next-line prefer-const
@@ -56,7 +56,7 @@ class GenericScripting {
 
   async dispatchEventInSandbox(event) {
     const sandbox = await this._ready;
-    sandbox.dispatchEvent(event);
+    setTimeout(() => sandbox.dispatchEvent(event), 0);
   }
 
   async destroySandbox() {
@@ -65,4 +65,4 @@ class GenericScripting {
   }
 }
 
-export { docPropertiesLookup, GenericScripting };
+export { docProperties, GenericScripting };

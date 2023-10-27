@@ -14,18 +14,21 @@
  */
 
 import {
+  docStyle,
   PresentationModeState,
-  RenderingStates,
   SidebarView,
+  toggleCheckedBtn,
+  toggleExpandedBtn,
 } from "./ui_utils.js";
 
+const SIDEBAR_WIDTH_VAR = "--sidebar-width";
+const SIDEBAR_MIN_WIDTH = 200; // pixels
+const SIDEBAR_RESIZING_CLASS = "sidebarResizing";
 const UI_NOTIFICATION_CLASS = "pdfSidebarNotification";
 
 /**
  * @typedef {Object} PDFSidebarOptions
  * @property {PDFSidebarElements} elements - The DOM elements.
- * @property {PDFViewer} pdfViewer - The document viewer.
- * @property {PDFThumbnailViewer} pdfThumbnailViewer - The thumbnail viewer.
  * @property {EventBus} eventBus - The application event bus.
  * @property {IL10n} l10n - The localization service.
  */
@@ -34,10 +37,12 @@ const UI_NOTIFICATION_CLASS = "pdfSidebarNotification";
  * @typedef {Object} PDFSidebarElements
  * @property {HTMLDivElement} outerContainer - The outer container
  *   (encasing both the viewer and sidebar elements).
- * @property {HTMLDivElement} viewerContainer - The viewer container
- *   (in which the viewer element is placed).
+ * @property {HTMLDivElement} sidebarContainer - The sidebar container
+ *   (in which the views are placed).
  * @property {HTMLButtonElement} toggleButton - The button used for
  *   opening/closing the sidebar.
+ * @property {HTMLDivElement} resizer - The DOM element that can be dragged in
+ *   order to adjust the width of the sidebar.
  * @property {HTMLButtonElement} thumbnailButton - The button used to show
  *   the thumbnail view.
  * @property {HTMLButtonElement} outlineButton - The button used to show
@@ -61,26 +66,36 @@ const UI_NOTIFICATION_CLASS = "pdfSidebarNotification";
  */
 
 class PDFSidebar {
+  #isRTL = false;
+
+  #mouseMoveBound = this.#mouseMove.bind(this);
+
+  #mouseUpBound = this.#mouseUp.bind(this);
+
+  #outerContainerWidth = null;
+
+  #width = null;
+
   /**
    * @param {PDFSidebarOptions} options
    */
-  constructor({ elements, pdfViewer, pdfThumbnailViewer, eventBus, l10n }) {
+  constructor({ elements, eventBus, l10n }) {
     this.isOpen = false;
     this.active = SidebarView.THUMBS;
     this.isInitialViewSet = false;
+    this.isInitialEventDispatched = false;
 
     /**
      * Callback used when the sidebar has been opened/closed, to ensure that
      * the viewers (PDFViewer/PDFThumbnailViewer) are updated correctly.
      */
     this.onToggled = null;
-
-    this.pdfViewer = pdfViewer;
-    this.pdfThumbnailViewer = pdfThumbnailViewer;
+    this.onUpdateThumbnails = null;
 
     this.outerContainer = elements.outerContainer;
-    this.viewerContainer = elements.viewerContainer;
+    this.sidebarContainer = elements.sidebarContainer;
     this.toggleButton = elements.toggleButton;
+    this.resizer = elements.resizer;
 
     this.thumbnailButton = elements.thumbnailButton;
     this.outlineButton = elements.outlineButton;
@@ -98,13 +113,17 @@ class PDFSidebar {
     this.eventBus = eventBus;
     this.l10n = l10n;
 
-    this._addEventListeners();
+    l10n.getDirection().then(dir => {
+      this.#isRTL = dir === "rtl";
+    });
+    this.#addEventListeners();
   }
 
   reset() {
     this.isInitialViewSet = false;
+    this.isInitialEventDispatched = false;
 
-    this._hideUINotification(/* reset = */ true);
+    this.#hideUINotification(/* reset = */ true);
     this.switchView(SidebarView.THUMBS);
 
     this.outlineButton.disabled = false;
@@ -120,22 +139,6 @@ class PDFSidebar {
     return this.isOpen ? this.active : SidebarView.NONE;
   }
 
-  get isThumbnailViewVisible() {
-    return this.isOpen && this.active === SidebarView.THUMBS;
-  }
-
-  get isOutlineViewVisible() {
-    return this.isOpen && this.active === SidebarView.OUTLINE;
-  }
-
-  get isAttachmentsViewVisible() {
-    return this.isOpen && this.active === SidebarView.ATTACHMENTS;
-  }
-
-  get isLayersViewVisible() {
-    return this.isOpen && this.active === SidebarView.LAYERS;
-  }
-
   /**
    * @param {number} view - The sidebar view that should become visible,
    *                        must be one of the values in {SidebarView}.
@@ -149,13 +152,15 @@ class PDFSidebar {
     // If the user has already manually opened the sidebar, immediately closing
     // it would be bad UX; also ignore the "unknown" sidebar view value.
     if (view === SidebarView.NONE || view === SidebarView.UNKNOWN) {
-      this._dispatchEvent();
+      this.#dispatchEvent();
       return;
     }
-    // Prevent dispatching two back-to-back `sidebarviewchanged` events,
-    // since `this._switchView` dispatched the event if the view changed.
-    if (!this._switchView(view, /* forceOpen */ true)) {
-      this._dispatchEvent();
+    this.switchView(view, /* forceOpen = */ true);
+
+    // Prevent dispatching two back-to-back "sidebarviewchanged" events,
+    // since `this.switchView` dispatched the event if the view changed.
+    if (!this.isInitialEventDispatched) {
+      this.#dispatchEvent();
     }
   }
 
@@ -166,74 +171,64 @@ class PDFSidebar {
    *                                The default value is `false`.
    */
   switchView(view, forceOpen = false) {
-    this._switchView(view, forceOpen);
-  }
-
-  /**
-   * @returns {boolean} Indicating if `this._dispatchEvent` was called.
-   * @private
-   */
-  _switchView(view, forceOpen = false) {
     const isViewChanged = view !== this.active;
-    let shouldForceRendering = false;
+    let forceRendering = false;
 
     switch (view) {
       case SidebarView.NONE:
         if (this.isOpen) {
           this.close();
-          return true; // Closing will trigger rendering and dispatch the event.
         }
-        return false;
+        return; // Closing will trigger rendering and dispatch the event.
       case SidebarView.THUMBS:
         if (this.isOpen && isViewChanged) {
-          shouldForceRendering = true;
+          forceRendering = true;
         }
         break;
       case SidebarView.OUTLINE:
         if (this.outlineButton.disabled) {
-          return false;
+          return;
         }
         break;
       case SidebarView.ATTACHMENTS:
         if (this.attachmentsButton.disabled) {
-          return false;
+          return;
         }
         break;
       case SidebarView.LAYERS:
         if (this.layersButton.disabled) {
-          return false;
+          return;
         }
         break;
       default:
-        console.error(`PDFSidebar._switchView: "${view}" is not a valid view.`);
-        return false;
+        console.error(`PDFSidebar.switchView: "${view}" is not a valid view.`);
+        return;
     }
     // Update the active view *after* it has been validated above,
     // in order to prevent setting it to an invalid state.
     this.active = view;
 
-    // Update the CSS classes, for all buttons...
-    this.thumbnailButton.classList.toggle(
-      "toggled",
-      view === SidebarView.THUMBS
+    // Update the CSS classes (and aria attributes), for all buttons and views.
+    toggleCheckedBtn(
+      this.thumbnailButton,
+      view === SidebarView.THUMBS,
+      this.thumbnailView
     );
-    this.outlineButton.classList.toggle(
-      "toggled",
-      view === SidebarView.OUTLINE
+    toggleCheckedBtn(
+      this.outlineButton,
+      view === SidebarView.OUTLINE,
+      this.outlineView
     );
-    this.attachmentsButton.classList.toggle(
-      "toggled",
-      view === SidebarView.ATTACHMENTS
+    toggleCheckedBtn(
+      this.attachmentsButton,
+      view === SidebarView.ATTACHMENTS,
+      this.attachmentsView
     );
-    this.layersButton.classList.toggle("toggled", view === SidebarView.LAYERS);
-    // ... and for all views.
-    this.thumbnailView.classList.toggle("hidden", view !== SidebarView.THUMBS);
-    this.outlineView.classList.toggle("hidden", view !== SidebarView.OUTLINE);
-    this.attachmentsView.classList.toggle(
-      "hidden",
-      view !== SidebarView.ATTACHMENTS
+    toggleCheckedBtn(
+      this.layersButton,
+      view === SidebarView.LAYERS,
+      this.layersView
     );
-    this.layersView.classList.toggle("hidden", view !== SidebarView.LAYERS);
 
     // Finally, update view-specific CSS classes.
     this._outlineOptionsContainer.classList.toggle(
@@ -243,16 +238,15 @@ class PDFSidebar {
 
     if (forceOpen && !this.isOpen) {
       this.open();
-      return true; // Opening will trigger rendering and dispatch the event.
+      return; // Opening will trigger rendering and dispatch the event.
     }
-    if (shouldForceRendering) {
-      this._updateThumbnailViewer();
-      this._forceRendering();
+    if (forceRendering) {
+      this.onUpdateThumbnails();
+      this.onToggled();
     }
     if (isViewChanged) {
-      this._dispatchEvent();
+      this.#dispatchEvent();
     }
-    return isViewChanged;
   }
 
   open() {
@@ -260,18 +254,17 @@ class PDFSidebar {
       return;
     }
     this.isOpen = true;
-    this.toggleButton.classList.add("toggled");
-    this.toggleButton.setAttribute("aria-expanded", "true");
+    toggleExpandedBtn(this.toggleButton, true);
 
     this.outerContainer.classList.add("sidebarMoving", "sidebarOpen");
 
     if (this.active === SidebarView.THUMBS) {
-      this._updateThumbnailViewer();
+      this.onUpdateThumbnails();
     }
-    this._forceRendering();
-    this._dispatchEvent();
+    this.onToggled();
+    this.#dispatchEvent();
 
-    this._hideUINotification();
+    this.#hideUINotification();
   }
 
   close() {
@@ -279,14 +272,13 @@ class PDFSidebar {
       return;
     }
     this.isOpen = false;
-    this.toggleButton.classList.remove("toggled");
-    this.toggleButton.setAttribute("aria-expanded", "false");
+    toggleExpandedBtn(this.toggleButton, false);
 
     this.outerContainer.classList.add("sidebarMoving");
     this.outerContainer.classList.remove("sidebarOpen");
 
-    this._forceRendering();
-    this._dispatchEvent();
+    this.onToggled();
+    this.#dispatchEvent();
   }
 
   toggle() {
@@ -297,54 +289,23 @@ class PDFSidebar {
     }
   }
 
-  /**
-   * @private
-   */
-  _dispatchEvent() {
+  #dispatchEvent() {
+    if (this.isInitialViewSet) {
+      this.isInitialEventDispatched ||= true;
+    }
+
     this.eventBus.dispatch("sidebarviewchanged", {
       source: this,
       view: this.visibleView,
     });
   }
 
-  /**
-   * @private
-   */
-  _forceRendering() {
-    if (this.onToggled) {
-      this.onToggled();
-    } else {
-      // Fallback
-      this.pdfViewer.forceRendering();
-      this.pdfThumbnailViewer.forceRendering();
-    }
-  }
-
-  /**
-   * @private
-   */
-  _updateThumbnailViewer() {
-    const { pdfViewer, pdfThumbnailViewer } = this;
-
-    // Use the rendered pages to set the corresponding thumbnail images.
-    const pagesCount = pdfViewer.pagesCount;
-    for (let pageIndex = 0; pageIndex < pagesCount; pageIndex++) {
-      const pageView = pdfViewer.getPageView(pageIndex);
-      if (pageView?.renderingState === RenderingStates.FINISHED) {
-        const thumbnailView = pdfThumbnailViewer.getThumbnail(pageIndex);
-        thumbnailView.setImage(pageView);
-      }
-    }
-    pdfThumbnailViewer.scrollThumbnailIntoView(pdfViewer.currentPageNumber);
-  }
-
-  /**
-   * @private
-   */
-  _showUINotification() {
-    this.l10n.get("toggle_sidebar_notification2.title").then(msg => {
-      this.toggleButton.title = msg;
-    });
+  #showUINotification() {
+    this.toggleButton.setAttribute(
+      "data-l10n-id",
+      "toggle_sidebar_notification2"
+    );
+    this.l10n.translate(this.toggleButton);
 
     if (!this.isOpen) {
       // Only show the notification on the `toggleButton` if the sidebar is
@@ -353,10 +314,7 @@ class PDFSidebar {
     }
   }
 
-  /**
-   * @private
-   */
-  _hideUINotification(reset = false) {
+  #hideUINotification(reset = false) {
     if (this.isOpen || reset) {
       // Only hide the notification on the `toggleButton` if the sidebar is
       // currently open, or when the current PDF document is being closed.
@@ -364,18 +322,14 @@ class PDFSidebar {
     }
 
     if (reset) {
-      this.l10n.get("toggle_sidebar.title").then(msg => {
-        this.toggleButton.title = msg;
-      });
+      this.toggleButton.setAttribute("data-l10n-id", "toggle_sidebar");
+      this.l10n.translate(this.toggleButton);
     }
   }
 
-  /**
-   * @private
-   */
-  _addEventListeners() {
-    this.viewerContainer.addEventListener("transitionend", evt => {
-      if (evt.target === this.viewerContainer) {
+  #addEventListeners() {
+    this.sidebarContainer.addEventListener("transitionend", evt => {
+      if (evt.target === this.sidebarContainer) {
         this.outerContainer.classList.remove("sidebarMoving");
       }
     });
@@ -417,7 +371,7 @@ class PDFSidebar {
       button.disabled = !count;
 
       if (count) {
-        this._showUINotification();
+        this.#showUINotification();
       } else if (this.active === view) {
         // If the `view` was opened by the user during document load,
         // switch away from it if it turns out to be empty.
@@ -452,11 +406,105 @@ class PDFSidebar {
     this.eventBus._on("presentationmodechanged", evt => {
       if (
         evt.state === PresentationModeState.NORMAL &&
-        this.isThumbnailViewVisible
+        this.visibleView === SidebarView.THUMBS
       ) {
-        this._updateThumbnailViewer();
+        this.onUpdateThumbnails();
       }
     });
+
+    // Handle resizing of the sidebar.
+    this.resizer.addEventListener("mousedown", evt => {
+      if (evt.button !== 0) {
+        return;
+      }
+      // Disable the `transition-duration` rules when sidebar resizing begins,
+      // in order to improve responsiveness and to avoid visual glitches.
+      this.outerContainer.classList.add(SIDEBAR_RESIZING_CLASS);
+
+      window.addEventListener("mousemove", this.#mouseMoveBound);
+      window.addEventListener("mouseup", this.#mouseUpBound);
+    });
+
+    this.eventBus._on("resize", evt => {
+      // When the *entire* viewer is resized, such that it becomes narrower,
+      // ensure that the sidebar doesn't end up being too wide.
+      if (evt.source !== window) {
+        return;
+      }
+      // Always reset the cached width when the viewer is resized.
+      this.#outerContainerWidth = null;
+
+      if (!this.#width) {
+        // The sidebar hasn't been resized, hence no need to adjust its width.
+        return;
+      }
+      // NOTE: If the sidebar is closed, we don't need to worry about
+      //       visual glitches nor ensure that rendering is triggered.
+      if (!this.isOpen) {
+        this.#updateWidth(this.#width);
+        return;
+      }
+      this.outerContainer.classList.add(SIDEBAR_RESIZING_CLASS);
+      const updated = this.#updateWidth(this.#width);
+
+      Promise.resolve().then(() => {
+        this.outerContainer.classList.remove(SIDEBAR_RESIZING_CLASS);
+        // Trigger rendering if the sidebar width changed, to avoid
+        // depending on the order in which 'resize' events are handled.
+        if (updated) {
+          this.eventBus.dispatch("resize", { source: this });
+        }
+      });
+    });
+  }
+
+  /**
+   * @type {number}
+   */
+  get outerContainerWidth() {
+    return (this.#outerContainerWidth ||= this.outerContainer.clientWidth);
+  }
+
+  /**
+   * returns {boolean} Indicating if the sidebar width was updated.
+   */
+  #updateWidth(width = 0) {
+    // Prevent the sidebar from becoming too narrow, or from occupying more
+    // than half of the available viewer width.
+    const maxWidth = Math.floor(this.outerContainerWidth / 2);
+    if (width > maxWidth) {
+      width = maxWidth;
+    }
+    if (width < SIDEBAR_MIN_WIDTH) {
+      width = SIDEBAR_MIN_WIDTH;
+    }
+    // Only update the UI when the sidebar width did in fact change.
+    if (width === this.#width) {
+      return false;
+    }
+    this.#width = width;
+
+    docStyle.setProperty(SIDEBAR_WIDTH_VAR, `${width}px`);
+    return true;
+  }
+
+  #mouseMove(evt) {
+    let width = evt.clientX;
+    // For sidebar resizing to work correctly in RTL mode, invert the width.
+    if (this.#isRTL) {
+      width = this.outerContainerWidth - width;
+    }
+    this.#updateWidth(width);
+  }
+
+  #mouseUp(evt) {
+    // Re-enable the `transition-duration` rules when sidebar resizing ends...
+    this.outerContainer.classList.remove(SIDEBAR_RESIZING_CLASS);
+    // ... and ensure that rendering will always be triggered.
+    this.eventBus.dispatch("resize", { source: this });
+
+    window.removeEventListener("mousemove", this.#mouseMoveBound);
+    window.removeEventListener("mouseup", this.#mouseUpBound);
   }
 }
 

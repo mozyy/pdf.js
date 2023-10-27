@@ -14,14 +14,15 @@
  */
 
 import { BaseTreeViewer } from "./base_tree_viewer.js";
-import { createPromiseCapability } from "pdfjs-lib";
+import { PromiseCapability } from "pdfjs-lib";
 import { SidebarView } from "./ui_utils.js";
 
 /**
  * @typedef {Object} PDFOutlineViewerOptions
  * @property {HTMLDivElement} container - The viewer element.
- * @property {IPDFLinkService} linkService - The navigation/linking service.
  * @property {EventBus} eventBus - The application event bus.
+ * @property {IPDFLinkService} linkService - The navigation/linking service.
+ * @property {DownloadManager} downloadManager - The download manager.
  */
 
 /**
@@ -37,6 +38,7 @@ class PDFOutlineViewer extends BaseTreeViewer {
   constructor(options) {
     super(options);
     this.linkService = options.linkService;
+    this.downloadManager = options.downloadManager;
 
     this.eventBus._on("toggleoutlinetree", this._toggleAllTreeItems.bind(this));
     this.eventBus._on(
@@ -87,7 +89,7 @@ class PDFOutlineViewer extends BaseTreeViewer {
    * @private
    */
   _dispatchEvent(outlineCount) {
-    this._currentOutlineItemCapability = createPromiseCapability();
+    this._currentOutlineItemCapability = new PromiseCapability();
     if (
       outlineCount === 0 ||
       this._pdfDocument?.loadingParams.disableAutoFetch
@@ -109,11 +111,42 @@ class PDFOutlineViewer extends BaseTreeViewer {
   /**
    * @private
    */
-  _bindLink(element, { url, newWindow, dest }) {
+  _bindLink(
+    element,
+    { url, newWindow, action, attachment, dest, setOCGState }
+  ) {
     const { linkService } = this;
 
     if (url) {
       linkService.addLinkAttributes(element, url, newWindow);
+      return;
+    }
+    if (action) {
+      element.href = linkService.getAnchorUrl("");
+      element.onclick = () => {
+        linkService.executeNamedAction(action);
+        return false;
+      };
+      return;
+    }
+    if (attachment) {
+      element.href = linkService.getAnchorUrl("");
+      element.onclick = () => {
+        this.downloadManager.openOrDownloadData(
+          element,
+          attachment.content,
+          attachment.filename
+        );
+        return false;
+      };
+      return;
+    }
+    if (setOCGState) {
+      element.href = linkService.getAnchorUrl("");
+      element.onclick = () => {
+        linkService.executeSetOCGState(setOCGState);
+        return false;
+      };
       return;
     }
 
@@ -204,7 +237,7 @@ class PDFOutlineViewer extends BaseTreeViewer {
         this._setStyles(element, item);
         element.textContent = this._normalizeTextContent(item.title);
 
-        div.appendChild(element);
+        div.append(element);
 
         if (item.items.length > 0) {
           hasAnyNesting = true;
@@ -212,12 +245,12 @@ class PDFOutlineViewer extends BaseTreeViewer {
 
           const itemsDiv = document.createElement("div");
           itemsDiv.className = "treeItems";
-          div.appendChild(itemsDiv);
+          div.append(itemsDiv);
 
           queue.push({ parent: itemsDiv, items: item.items });
         }
 
-        levelData.parent.appendChild(div);
+        levelData.parent.append(div);
         outlineCount++;
       }
     }
@@ -275,7 +308,7 @@ class PDFOutlineViewer extends BaseTreeViewer {
     if (this._pageNumberToDestHashCapability) {
       return this._pageNumberToDestHashCapability.promise;
     }
-    this._pageNumberToDestHashCapability = createPromiseCapability();
+    this._pageNumberToDestHashCapability = new PromiseCapability();
 
     const pageNumberToDestHash = new Map(),
       pageNumberNesting = new Map();
@@ -308,7 +341,7 @@ class PDFOutlineViewer extends BaseTreeViewer {
                   return null; // The document was closed while the data resolved.
                 }
                 this.linkService.cachePageRef(pageNumber, destRef);
-              } catch (ex) {
+              } catch {
                 // Invalid page reference, ignore it and continue parsing.
               }
             }

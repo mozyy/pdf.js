@@ -21,6 +21,7 @@ import {
   isPortraitOrientation,
   isValidRotation,
   parseQueryString,
+  removeNullCharacters,
 } from "../../web/ui_utils.js";
 
 describe("ui_utils", function () {
@@ -49,6 +50,11 @@ describe("ui_utils", function () {
       expect(binarySearchFirstItem([0, 1, 2], isGreater3)).toEqual(3);
       expect(binarySearchFirstItem([2, 3, 4], isGreater3)).toEqual(2);
       expect(binarySearchFirstItem([4, 5, 6], isGreater3)).toEqual(0);
+    });
+    it("three numeric entries and a start index", function () {
+      expect(binarySearchFirstItem([0, 1, 2, 3, 4], isGreater3, 2)).toEqual(4);
+      expect(binarySearchFirstItem([2, 3, 4], isGreater3, 2)).toEqual(2);
+      expect(binarySearchFirstItem([4, 5, 6], isGreater3, 1)).toEqual(1);
     });
   });
 
@@ -136,6 +142,31 @@ describe("ui_utils", function () {
       expect(parameters.size).toEqual(2);
       expect(parameters.get("key1")).toEqual("Value1");
       expect(parameters.get("key2")).toEqual("Value2");
+    });
+  });
+
+  describe("removeNullCharacters", function () {
+    it("should not modify string without null characters", function () {
+      const str = "string without null chars";
+      expect(removeNullCharacters(str)).toEqual("string without null chars");
+    });
+
+    it("should modify string with null characters", function () {
+      const str = "string\x00With\x00Null\x00Chars";
+      expect(removeNullCharacters(str)).toEqual("stringWithNullChars");
+    });
+
+    it("should modify string with non-displayable characters", function () {
+      const str = Array.from(
+        Array(32).keys(),
+        x => String.fromCharCode(x) + "a"
+      ).join("");
+      // \x00 is replaced by an empty string.
+      const expected =
+        "a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a";
+      expect(removeNullCharacters(str, /* replaceInvisible */ true)).toEqual(
+        expected
+      );
     });
   });
 
@@ -271,7 +302,7 @@ describe("ui_utils", function () {
           ids.add(view.id);
         }
       }
-      return { first: views[0], last: views[views.length - 1], views, ids };
+      return { first: views[0], last: views.at(-1), views, ids };
     }
 
     // This function takes a fixed layout of pages and compares the system under

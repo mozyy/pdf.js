@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 /* globals CFFDictDataMap, CFFDictPrivateDataMap, CFFEncodingMap, CFFStrings,
-           Components, Dict, dump, FormatError, isNum, netscape, Stream */
+           Components, Dict, dump, FormatError, netscape, Stream */
 
 'use strict';
 
@@ -273,7 +273,7 @@ var Type2Parser = function type2Parser(aFilePath) {
     var count = decoded.length;
     for (var i = 0; i < count; i++) {
       var token = decoded[i];
-      if (isNum(token)) {
+      if (typeof token === "number") {
         stack.push(token);
       } else {
         switch (token.operand) {
@@ -293,7 +293,7 @@ var Type2Parser = function type2Parser(aFilePath) {
             font.set(token.name, stack.pop());
             break;
           default:
-            if (token.operand && token.operand.length) {
+            if (token.operand?.length) {
               var array = [];
               for (var j = 0; j < token.operand.length; j++) {
                 array.push(stack.pop());

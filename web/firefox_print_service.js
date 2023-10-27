@@ -29,7 +29,8 @@ function composePage(
   size,
   printContainer,
   printResolution,
-  optionalContentConfigPromise
+  optionalContentConfigPromise,
+  printAnnotationStoragePromise
 ) {
   const canvas = document.createElement("canvas");
 
@@ -40,8 +41,8 @@ function composePage(
 
   const canvasWrapper = document.createElement("div");
   canvasWrapper.className = "printedPage";
-  canvasWrapper.appendChild(canvas);
-  printContainer.appendChild(canvasWrapper);
+  canvasWrapper.append(canvas);
+  printContainer.append(canvasWrapper);
 
   // A callback for a given page may be executed multiple times for different
   // print operations (think of changing the print settings in the browser).
@@ -61,9 +62,12 @@ function composePage(
     ctx.restore();
 
     let thisRenderTask = null;
-    pdfDocument
-      .getPage(pageNumber)
-      .then(function (pdfPage) {
+
+    Promise.all([
+      pdfDocument.getPage(pageNumber),
+      printAnnotationStoragePromise,
+    ])
+      .then(function ([pdfPage, printAnnotationStorage]) {
         if (currentRenderTask) {
           currentRenderTask.cancel();
           currentRenderTask = null;
@@ -75,6 +79,7 @@ function composePage(
           intent: "print",
           annotationMode: AnnotationMode.ENABLE_STORAGE,
           optionalContentConfigPromise,
+          printAnnotationStorage,
         };
         currentRenderTask = thisRenderTask = pdfPage.render(renderContext);
         return thisRenderTask.promise;
@@ -109,22 +114,25 @@ function composePage(
   };
 }
 
-function FirefoxPrintService(
-  pdfDocument,
-  pagesOverview,
-  printContainer,
-  printResolution,
-  optionalContentConfigPromise = null
-) {
-  this.pdfDocument = pdfDocument;
-  this.pagesOverview = pagesOverview;
-  this.printContainer = printContainer;
-  this._printResolution = printResolution || 150;
-  this._optionalContentConfigPromise =
-    optionalContentConfigPromise || pdfDocument.getOptionalContentConfig();
-}
+class FirefoxPrintService {
+  constructor(
+    pdfDocument,
+    pagesOverview,
+    printContainer,
+    printResolution,
+    optionalContentConfigPromise = null,
+    printAnnotationStoragePromise = null
+  ) {
+    this.pdfDocument = pdfDocument;
+    this.pagesOverview = pagesOverview;
+    this.printContainer = printContainer;
+    this._printResolution = printResolution || 150;
+    this._optionalContentConfigPromise =
+      optionalContentConfigPromise || pdfDocument.getOptionalContentConfig();
+    this._printAnnotationStoragePromise =
+      printAnnotationStoragePromise || Promise.resolve();
+  }
 
-FirefoxPrintService.prototype = {
   layout() {
     const {
       pdfDocument,
@@ -132,10 +140,28 @@ FirefoxPrintService.prototype = {
       printContainer,
       _printResolution,
       _optionalContentConfigPromise,
+      _printAnnotationStoragePromise,
     } = this;
 
     const body = document.querySelector("body");
     body.setAttribute("data-pdfjsprinting", true);
+
+    const { width, height } = this.pagesOverview[0];
+    const hasEqualPageSizes = this.pagesOverview.every(
+      size => size.width === width && size.height === height
+    );
+    if (!hasEqualPageSizes) {
+      console.warn(
+        "Not all pages have the same size. The printed result may be incorrect!"
+      );
+    }
+
+    // Insert a @page + size rule to make sure that the page size is correctly
+    // set. Note that we assume that all pages have the same size, because
+    // variable-size pages are scaled down to the initial page size in Firefox.
+    this.pageStyleSheet = document.createElement("style");
+    this.pageStyleSheet.textContent = `@page { size: ${width}pt ${height}pt;}`;
+    body.append(this.pageStyleSheet);
 
     if (pdfDocument.isPureXfa) {
       getXfaHtmlForPrinting(printContainer, pdfDocument);
@@ -149,18 +175,24 @@ FirefoxPrintService.prototype = {
         pagesOverview[i],
         printContainer,
         _printResolution,
-        _optionalContentConfigPromise
+        _optionalContentConfigPromise,
+        _printAnnotationStoragePromise
       );
     }
-  },
+  }
 
   destroy() {
     this.printContainer.textContent = "";
 
     const body = document.querySelector("body");
     body.removeAttribute("data-pdfjsprinting");
-  },
-};
+
+    if (this.pageStyleSheet) {
+      this.pageStyleSheet.remove();
+      this.pageStyleSheet = null;
+    }
+  }
+}
 
 PDFPrintServiceFactory.instance = {
   get supportsPrinting() {
@@ -175,14 +207,16 @@ PDFPrintServiceFactory.instance = {
     pagesOverview,
     printContainer,
     printResolution,
-    optionalContentConfigPromise
+    optionalContentConfigPromise,
+    printAnnotationStoragePromise
   ) {
     return new FirefoxPrintService(
       pdfDocument,
       pagesOverview,
       printContainer,
       printResolution,
-      optionalContentConfigPromise
+      optionalContentConfigPromise,
+      printAnnotationStoragePromise
     );
   },
 };

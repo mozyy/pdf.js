@@ -70,29 +70,20 @@ limitations under the License.
 
       var deduplication_id = getDeduplicationId(wasUpdated);
       var extension_version = chrome.runtime.getManifest().version;
-      if (window.Request && "mode" in Request.prototype) {
-        // fetch is supported in extensions since Chrome 42 (though the above
-        // feature-detection method detects Chrome 43+).
-        // Unlike XMLHttpRequest, fetch omits credentials such as cookies in the
-        // requests, which guarantees that the server cannot track the client
-        // via HTTP cookies.
-        fetch(LOG_URL, {
-          method: "POST",
-          headers: new Headers({
-            "Deduplication-Id": deduplication_id,
-            "Extension-Version": extension_version,
-          }),
-          // Set mode=cors so that the above custom headers are included in the
-          // request.
-          mode: "cors",
-        });
-        return;
-      }
-      var x = new XMLHttpRequest();
-      x.open("POST", LOG_URL);
-      x.setRequestHeader("Deduplication-Id", deduplication_id);
-      x.setRequestHeader("Extension-Version", extension_version);
-      x.send();
+      fetch(LOG_URL, {
+        method: "POST",
+        headers: new Headers({
+          "Deduplication-Id": deduplication_id,
+          "Extension-Version": extension_version,
+        }),
+        // Set mode=cors so that the above custom headers are included in the
+        // request.
+        mode: "cors",
+        // Omits credentials such as cookies in the requests, which guarantees
+        // that the server cannot track the client via HTTP cookies.
+        credentials: "omit",
+        cache: "no-store",
+      });
     });
   }
 
@@ -110,8 +101,7 @@ limitations under the License.
       id = "";
       var buf = new Uint8Array(5);
       crypto.getRandomValues(buf);
-      for (var i = 0; i < buf.length; ++i) {
-        var c = buf[i];
+      for (const c of buf) {
         id += (c >>> 4).toString(16) + (c & 0xf).toString(16);
       }
       localStorage.telemetryDeduplicationId = id;

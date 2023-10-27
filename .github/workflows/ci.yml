@@ -1,5 +1,8 @@
 name: CI
 on: [push, pull_request]
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Test
@@ -7,12 +10,14 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v2
-
-      - name: Use Node.js 16 LTS
-        uses: actions/setup-node@v2
+        uses: actions/checkout@v4
         with:
-          node-version: '16'
+          fetch-depth: 0
+
+      - name: Use Node.js 18 LTS
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
 
       - name: Install Gulp
         run: npm install -g gulp-cli

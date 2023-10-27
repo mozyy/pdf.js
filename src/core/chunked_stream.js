@@ -13,12 +13,8 @@
  * limitations under the License.
  */
 
-import {
-  arrayByteLength,
-  arraysToBytes,
-  createPromiseCapability,
-} from "../shared/util.js";
-import { MissingDataException } from "./core_utils.js";
+import { arrayBuffersToBytes, MissingDataException } from "./core_utils.js";
+import { assert, PromiseCapability } from "../shared/util.js";
 import { Stream } from "./stream.js";
 
 class ChunkedStream extends Stream {
@@ -169,7 +165,7 @@ class ChunkedStream extends Stream {
     return this.bytes[this.pos++];
   }
 
-  getBytes(length, forceClamped = false) {
+  getBytes(length) {
     const bytes = this.bytes;
     const pos = this.pos;
     const strEnd = this.end;
@@ -178,9 +174,7 @@ class ChunkedStream extends Stream {
       if (strEnd > this.progressiveDataLength) {
         this.ensureRange(pos, strEnd);
       }
-      const subarray = bytes.subarray(pos, strEnd);
-      // `this.bytes` is always a `Uint8Array` here.
-      return forceClamped ? new Uint8ClampedArray(subarray) : subarray;
+      return bytes.subarray(pos, strEnd);
     }
 
     let end = pos + length;
@@ -192,9 +186,7 @@ class ChunkedStream extends Stream {
     }
 
     this.pos = end;
-    const subarray = bytes.subarray(pos, end);
-    // `this.bytes` is always a `Uint8Array` here.
-    return forceClamped ? new Uint8ClampedArray(subarray) : subarray;
+    return bytes.subarray(pos, end);
   }
 
   getByteRange(begin, end) {
@@ -215,7 +207,7 @@ class ChunkedStream extends Stream {
       if (start + length > this.progressiveDataLength) {
         this.ensureRange(start, start + length);
       }
-    } else {
+    } else if (start >= this.progressiveDataLength) {
       // When the `length` is undefined you do *not*, under any circumstances,
       // want to fallback on calling `this.ensureRange(start, this.end)` since
       // that would force the *entire* PDF file to be loaded, thus completely
@@ -225,9 +217,7 @@ class ChunkedStream extends Stream {
       // time/resources during e.g. parsing, since `MissingDataException`s will
       // require data to be re-parsed, which we attempt to minimize by at least
       // checking that the *beginning* of the data is available here.
-      if (start >= this.progressiveDataLength) {
-        this.ensureByte(start);
-      }
+      this.ensureByte(start);
     }
 
     function ChunkedStreamSubstream() {}
@@ -283,11 +273,7 @@ class ChunkedStreamManager {
     this.progressiveDataLength = 0;
     this.aborted = false;
 
-    this._loadedStreamCapability = createPromiseCapability();
-  }
-
-  onLoadedStream() {
-    return this._loadedStreamCapability.promise;
+    this._loadedStreamCapability = new PromiseCapability();
   }
 
   sendRequest(begin, end) {
@@ -299,21 +285,28 @@ class ChunkedStreamManager {
     let chunks = [],
       loaded = 0;
     return new Promise((resolve, reject) => {
-      const readChunk = chunk => {
+      const readChunk = ({ value, done }) => {
         try {
-          if (!chunk.done) {
-            const data = chunk.value;
-            chunks.push(data);
-            loaded += arrayByteLength(data);
-            if (rangeReader.isStreamingSupported) {
-              this.onProgress({ loaded });
-            }
-            rangeReader.read().then(readChunk, reject);
+          if (done) {
+            const chunkData = arrayBuffersToBytes(chunks);
+            chunks = null;
+            resolve(chunkData);
             return;
           }
-          const chunkData = arraysToBytes(chunks);
-          chunks = null;
-          resolve(chunkData);
+          if (typeof PDFJSDev === "undefined" || PDFJSDev.test("TESTING")) {
+            assert(
+              value instanceof ArrayBuffer,
+              "readChunk (sendRequest) - expected an ArrayBuffer."
+            );
+          }
+          loaded += value.byteLength;
+
+          if (rangeReader.isStreamingSupported) {
+            this.onProgress({ loaded });
+          }
+
+          chunks.push(value);
+          rangeReader.read().then(readChunk, reject);
         } catch (e) {
           reject(e);
         }
@@ -331,9 +324,11 @@ class ChunkedStreamManager {
    * Get all the chunks that are not yet loaded and group them into
    * contiguous ranges to load in as few requests as possible.
    */
-  requestAllChunks() {
-    const missingChunks = this.stream.getMissingChunks();
-    this._requestChunks(missingChunks);
+  requestAllChunks(noFetch = false) {
+    if (!noFetch) {
+      const missingChunks = this.stream.getMissingChunks();
+      this._requestChunks(missingChunks);
+    }
     return this._loadedStreamCapability.promise;
   }
 
@@ -352,7 +347,7 @@ class ChunkedStreamManager {
       return Promise.resolve();
     }
 
-    const capability = createPromiseCapability();
+    const capability = new PromiseCapability();
     this._promisesByRequest.set(requestId, capability);
 
     const chunksToRequest = [];
@@ -551,9 +546,8 @@ class ChunkedStreamManager {
 
   abort(reason) {
     this.aborted = true;
-    if (this.pdfNetworkStream) {
-      this.pdfNetworkStream.cancelAllRequests(reason);
-    }
+    this.pdfNetworkStream?.cancelAllRequests(reason);
+
     for (const capability of this._promisesByRequest.values()) {
       capability.reject(reason);
     }

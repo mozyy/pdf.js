@@ -22,11 +22,7 @@ function getViewerURL(pdf_url) {
   return VIEWER_URL + "?file=" + encodeURIComponent(pdf_url);
 }
 
-if (CSS.supports("animation", "0s")) {
-  document.addEventListener("animationstart", onAnimationStart, true);
-} else {
-  document.addEventListener("webkitAnimationStart", onAnimationStart, true);
-}
+document.addEventListener("animationstart", onAnimationStart, true);
 
 function onAnimationStart(event) {
   if (event.animationName === "pdfjs-detected-object-or-embed") {
@@ -132,7 +128,11 @@ function updateEmbedElement(elem) {
   }
   elem.type = "text/html";
   elem.src = getEmbeddedViewerURL(elem.src);
+
   if (parentNode) {
+    // Suppress linter warning: insertBefore is preferable to
+    // nextSibling.before(elem) because nextSibling may be null.
+    // eslint-disable-next-line unicorn/prefer-modern-dom-apis
     parentNode.insertBefore(elem, nextSibling);
   }
 }
@@ -160,7 +160,7 @@ function updateObjectElement(elem) {
   if (!iframe || !iframe.__inserted_by_pdfjs) {
     iframe = createFullSizeIframe();
     elem.textContent = "";
-    elem.appendChild(iframe);
+    elem.append(iframe);
     iframe.__inserted_by_pdfjs = true;
   }
   iframe.src = getEmbeddedViewerURL(elem.data);

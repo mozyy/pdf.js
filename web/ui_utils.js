@@ -23,8 +23,6 @@ const MAX_AUTO_SCALE = 1.25;
 const SCROLLBAR_PADDING = 40;
 const VERTICAL_PADDING = 5;
 
-const LOADINGBAR_END_OFFSET_VAR = "--loadingBar-end-offset";
-
 const RenderingStates = {
   INITIAL: 0,
   RUNNING: 1,
@@ -48,15 +46,10 @@ const SidebarView = {
   LAYERS: 4,
 };
 
-const RendererType = {
-  CANVAS: "canvas",
-  SVG: "svg",
-};
-
 const TextLayerMode = {
   DISABLE: 0,
   ENABLE: 1,
-  ENABLE_ENHANCE: 2,
+  ENABLE_PERMISSIONS: 2,
 };
 
 const ScrollMode = {
@@ -74,35 +67,48 @@ const SpreadMode = {
   EVEN: 2,
 };
 
+const CursorTool = {
+  SELECT: 0, // The default value.
+  HAND: 1,
+  ZOOM: 2,
+};
+
 // Used by `PDFViewerApplication`, and by the API unit-tests.
 const AutoPrintRegExp = /\bprint\s*\(/;
 
 /**
- * Returns scale factor for the canvas. It makes sense for the HiDPI displays.
- * @returns {Object} The object with horizontal (sx) and vertical (sy)
- *                   scales. The scaled property is set to false if scaling is
- *                   not required, true otherwise.
+ * Scale factors for the canvas, necessary with HiDPI displays.
  */
-function getOutputScale(ctx) {
-  const devicePixelRatio = window.devicePixelRatio || 1;
-  const backingStoreRatio =
-    ctx.webkitBackingStorePixelRatio ||
-    ctx.mozBackingStorePixelRatio ||
-    ctx.backingStorePixelRatio ||
-    1;
-  const pixelRatio = devicePixelRatio / backingStoreRatio;
-  return {
-    sx: pixelRatio,
-    sy: pixelRatio,
-    scaled: pixelRatio !== 1,
-  };
+class OutputScale {
+  constructor() {
+    const pixelRatio = window.devicePixelRatio || 1;
+
+    /**
+     * @type {number} Horizontal scale.
+     */
+    this.sx = pixelRatio;
+
+    /**
+     * @type {number} Vertical scale.
+     */
+    this.sy = pixelRatio;
+  }
+
+  /**
+   * @type {boolean} Returns `true` when scaling is required, `false` otherwise.
+   */
+  get scaled() {
+    return this.sx !== 1 || this.sy !== 1;
+  }
 }
 
 /**
  * Scrolls specified element into view of its parent.
- * @param {Object} element - The element to be visible.
- * @param {Object} spot - An object with optional top and left properties,
+ * @param {HTMLElement} element - The element to be visible.
+ * @param {Object} [spot] - An object with optional top and left properties,
  *   specifying the offset from the top left edge.
+ * @param {number} [spot.left]
+ * @param {number} [spot.top]
  * @param {boolean} [scrollMatches] - When scrolling search results into view,
  *   ignore elements that either: Contains marked content identifiers,
  *   or have the CSS-rule `overflow: hidden;` set. The default value is `false`.
@@ -189,7 +195,7 @@ function watchScroll(viewAreaElement, callback) {
 
 /**
  * Helper function to parse query string (e.g. ?param1=value&param2=...).
- * @param {string}
+ * @param {string} query
  * @returns {Map}
  */
 function parseQueryString(query) {
@@ -198,6 +204,23 @@ function parseQueryString(query) {
     params.set(key.toLowerCase(), value);
   }
   return params;
+}
+
+const InvisibleCharactersRegExp = /[\x01-\x1F]/g;
+
+/**
+ * @param {string} str
+ * @param {boolean} [replaceInvisible]
+ */
+function removeNullCharacters(str, replaceInvisible = false) {
+  if (typeof str !== "string") {
+    console.error(`The argument must be a string.`);
+    return str;
+  }
+  if (replaceInvisible) {
+    str = str.replaceAll(InvisibleCharactersRegExp, " ");
+  }
+  return str.replaceAll("\x00", "");
 }
 
 /**
@@ -209,8 +232,8 @@ function parseQueryString(query) {
  * @returns {number} Index of the first array element to pass the test,
  *                   or |items.length| if no such element exists.
  */
-function binarySearchFirstItem(items, condition) {
-  let minIndex = 0;
+function binarySearchFirstItem(items, condition, start = 0) {
+  let minIndex = start;
   let maxIndex = items.length - 1;
 
   if (maxIndex < 0 || !condition(items[maxIndex])) {
@@ -438,7 +461,7 @@ function backtrackBeforeAllVisibleElements(index, views, top) {
  * rendering canvas. Earlier and later refer to index in `views`, not page
  * layout.)
  *
- * @param {GetVisibleElementsParameters}
+ * @param {GetVisibleElementsParameters} params
  * @returns {Object} `{ first, last, views: [{ id, x, y, view, percent }] }`
  */
 function getVisibleElements({
@@ -567,7 +590,7 @@ function getVisibleElements({
   }
 
   const first = visible[0],
-    last = visible[visible.length - 1];
+    last = visible.at(-1);
 
   if (sortByVisibility) {
     visible.sort(function (a, b) {
@@ -581,13 +604,6 @@ function getVisibleElements({
   return { first, last, views: visible, ids };
 }
 
-/**
- * Event handler to suppress context menu.
- */
-function noContextMenuHandler(evt) {
-  evt.preventDefault();
-}
-
 function normalizeWheelEventDirection(evt) {
   let delta = Math.hypot(evt.deltaX, evt.deltaY);
   const angle = Math.atan2(evt.deltaY, evt.deltaX);
@@ -599,17 +615,16 @@ function normalizeWheelEventDirection(evt) {
 }
 
 function normalizeWheelEventDelta(evt) {
+  const deltaMode = evt.deltaMode; // Avoid being affected by bug 1392460.
   let delta = normalizeWheelEventDirection(evt);
 
-  const MOUSE_DOM_DELTA_PIXEL_MODE = 0;
-  const MOUSE_DOM_DELTA_LINE_MODE = 1;
   const MOUSE_PIXELS_PER_LINE = 30;
   const MOUSE_LINES_PER_PAGE = 30;
 
   // Converts delta to per-page units
-  if (evt.deltaMode === MOUSE_DOM_DELTA_PIXEL_MODE) {
+  if (deltaMode === WheelEvent.DOM_DELTA_PIXEL) {
     delta /= MOUSE_PIXELS_PER_LINE * MOUSE_LINES_PER_PAGE;
-  } else if (evt.deltaMode === MOUSE_DOM_DELTA_LINE_MODE) {
+  } else if (deltaMode === WheelEvent.DOM_DELTA_LINE) {
     delta /= MOUSE_LINES_PER_PAGE;
   }
   return delta;
@@ -656,49 +671,47 @@ const animationStarted = new Promise(function (resolve) {
   window.requestAnimationFrame(resolve);
 });
 
+const docStyle =
+  typeof PDFJSDev !== "undefined" &&
+  PDFJSDev.test("LIB") &&
+  typeof document === "undefined"
+    ? null
+    : document.documentElement.style;
+
 function clamp(v, min, max) {
   return Math.min(Math.max(v, min), max);
 }
 
 class ProgressBar {
-  constructor(id, { height, width, units } = {}) {
-    this.visible = true;
+  #classList = null;
 
-    // Fetch the sub-elements for later.
-    this.div = document.querySelector(id + " .progress");
-    // Get the loading bar element, so it can be resized to fit the viewer.
-    this.bar = this.div.parentNode;
+  #disableAutoFetchTimeout = null;
 
-    // Get options, with sensible defaults.
-    this.height = height || 100;
-    this.width = width || 100;
-    this.units = units || "%";
+  #percent = 0;
 
-    // Initialize heights.
-    this.div.style.height = this.height + this.units;
-    this.percent = 0;
-  }
+  #style = null;
 
-  _updateBar() {
-    if (this._indeterminate) {
-      this.div.classList.add("indeterminate");
-      this.div.style.width = this.width + this.units;
-      return;
-    }
+  #visible = true;
 
-    this.div.classList.remove("indeterminate");
-    const progressSize = (this.width * this._percent) / 100;
-    this.div.style.width = progressSize + this.units;
+  constructor(bar) {
+    this.#classList = bar.classList;
+    this.#style = bar.style;
   }
 
   get percent() {
-    return this._percent;
+    return this.#percent;
   }
 
   set percent(val) {
-    this._indeterminate = isNaN(val);
-    this._percent = clamp(val, 0, 100);
-    this._updateBar();
+    this.#percent = clamp(val, 0, 100);
+
+    if (isNaN(val)) {
+      this.#classList.add("indeterminate");
+      return;
+    }
+    this.#classList.remove("indeterminate");
+
+    this.#style.setProperty("--progressBar-percent", `${this.#percent}%`);
   }
 
   setWidth(viewer) {
@@ -708,25 +721,42 @@ class ProgressBar {
     const container = viewer.parentNode;
     const scrollbarWidth = container.offsetWidth - viewer.offsetWidth;
     if (scrollbarWidth > 0) {
-      const doc = document.documentElement;
-      doc.style.setProperty(LOADINGBAR_END_OFFSET_VAR, `${scrollbarWidth}px`);
+      this.#style.setProperty(
+        "--progressBar-end-offset",
+        `${scrollbarWidth}px`
+      );
     }
+  }
+
+  setDisableAutoFetch(delay = /* ms = */ 5000) {
+    if (isNaN(this.#percent)) {
+      return;
+    }
+    if (this.#disableAutoFetchTimeout) {
+      clearTimeout(this.#disableAutoFetchTimeout);
+    }
+    this.show();
+
+    this.#disableAutoFetchTimeout = setTimeout(() => {
+      this.#disableAutoFetchTimeout = null;
+      this.hide();
+    }, delay);
   }
 
   hide() {
-    if (!this.visible) {
+    if (!this.#visible) {
       return;
     }
-    this.visible = false;
-    this.bar.classList.add("hidden");
+    this.#visible = false;
+    this.#classList.add("hidden");
   }
 
   show() {
-    if (this.visible) {
+    if (this.#visible) {
       return;
     }
-    this.visible = true;
-    this.bar.classList.remove("hidden");
+    this.#visible = true;
+    this.#classList.remove("hidden");
   }
 }
 
@@ -754,10 +784,7 @@ function getActiveOrFocusedElement() {
 
 /**
  * Converts API PageLayout values to the format used by `BaseViewer`.
- * NOTE: This is supported to the extent that the viewer implements the
- *       necessary Scroll/Spread modes (since SinglePage, TwoPageLeft,
- *       and TwoPageRight all suggests using non-continuous scrolling).
- * @param {string} mode - The API PageLayout value.
+ * @param {string} layout - The API PageLayout value.
  * @returns {Object}
  */
 function apiPageLayoutToViewerModes(layout) {
@@ -810,6 +837,20 @@ function apiPageModeToSidebarView(mode) {
   return SidebarView.NONE; // Default value.
 }
 
+function toggleCheckedBtn(button, toggle, view = null) {
+  button.classList.toggle("toggled", toggle);
+  button.setAttribute("aria-checked", toggle);
+
+  view?.classList.toggle("hidden", !toggle);
+}
+
+function toggleExpandedBtn(button, toggle, view = null) {
+  button.classList.toggle("toggled", toggle);
+  button.setAttribute("aria-expanded", toggle);
+
+  view?.classList.toggle("hidden", !toggle);
+}
+
 export {
   animationStarted,
   apiPageLayoutToViewerModes,
@@ -818,11 +859,12 @@ export {
   AutoPrintRegExp,
   backtrackBeforeAllVisibleElements, // only exported for testing
   binarySearchFirstItem,
+  CursorTool,
   DEFAULT_SCALE,
   DEFAULT_SCALE_DELTA,
   DEFAULT_SCALE_VALUE,
+  docStyle,
   getActiveOrFocusedElement,
-  getOutputScale,
   getPageSizeInches,
   getVisibleElements,
   isPortraitOrientation,
@@ -832,13 +874,13 @@ export {
   MAX_AUTO_SCALE,
   MAX_SCALE,
   MIN_SCALE,
-  noContextMenuHandler,
   normalizeWheelEventDelta,
   normalizeWheelEventDirection,
+  OutputScale,
   parseQueryString,
   PresentationModeState,
   ProgressBar,
-  RendererType,
+  removeNullCharacters,
   RenderingStates,
   roundToDivide,
   SCROLLBAR_PADDING,
@@ -847,6 +889,8 @@ export {
   SidebarView,
   SpreadMode,
   TextLayerMode,
+  toggleCheckedBtn,
+  toggleExpandedBtn,
   UNKNOWN_SCALE,
   VERTICAL_PADDING,
   watchScroll,

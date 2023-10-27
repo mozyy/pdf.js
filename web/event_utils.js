@@ -75,9 +75,7 @@ function waitOnEventOrTimeout({ target, name, delay = 0 }) {
  * and `off` methods. To raise an event, the `dispatch` method shall be used.
  */
 class EventBus {
-  constructor() {
-    this._listeners = Object.create(null);
-  }
+  #listeners = Object.create(null);
 
   /**
    * @param {string} eventName
@@ -108,7 +106,7 @@ class EventBus {
    * @param {Object} data
    */
   dispatch(eventName, data) {
-    const eventListeners = this._listeners[eventName];
+    const eventListeners = this.#listeners[eventName];
     if (!eventListeners || eventListeners.length === 0) {
       return;
     }
@@ -139,7 +137,7 @@ class EventBus {
    * @ignore
    */
   _on(eventName, listener, options = null) {
-    const eventListeners = (this._listeners[eventName] ||= []);
+    const eventListeners = (this.#listeners[eventName] ||= []);
     eventListeners.push({
       listener,
       external: options?.external === true,
@@ -151,7 +149,7 @@ class EventBus {
    * @ignore
    */
   _off(eventName, listener, options = null) {
-    const eventListeners = this._listeners[eventName];
+    const eventListeners = this.#listeners[eventName];
     if (!eventListeners) {
       return;
     }
@@ -174,7 +172,7 @@ class AutomationEventBus extends EventBus {
     }
     super.dispatch(eventName, data);
 
-    const details = Object.create(null);
+    const detail = Object.create(null);
     if (data) {
       for (const key in data) {
         const value = data[key];
@@ -184,11 +182,14 @@ class AutomationEventBus extends EventBus {
           }
           continue; // Ignore the `source` property.
         }
-        details[key] = value;
+        detail[key] = value;
       }
     }
-    const event = document.createEvent("CustomEvent");
-    event.initCustomEvent(eventName, true, true, details);
+    const event = new CustomEvent(eventName, {
+      bubbles: true,
+      cancelable: true,
+      detail,
+    });
     document.dispatchEvent(event);
   }
 }

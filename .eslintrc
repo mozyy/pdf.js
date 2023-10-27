@@ -20,7 +20,7 @@
 
   "env": {
     "browser": true,
-    "es2021": true,
+    "es2022": true,
     "worker": true,
     "amd": true,
   },
@@ -28,14 +28,21 @@
   "globals": {
     "PDFJSDev": false,
     "exports": false,
-    "SystemJS": false,
   },
 
   "rules": {
     // Plugins
+    "import/export": "error",
+    "import/exports-last": "error",
     "import/extensions": ["error", "always", { "ignorePackages": true, }],
+    "import/first": "error",
+    "import/named": "error",
+    "import/no-cycle": "error",
+    "import/no-empty-named-blocks": "error",
+    "import/no-mutable-exports": "error",
+    "import/no-self-import": "error",
     "import/no-unresolved": ["error", {
-      "ignore": ["pdfjs", "pdfjs-lib", "pdfjs-web"]
+      "ignore": ["display", "pdfjs", "pdfjs-lib", "pdfjs-web", "web"]
     }],
     "mozilla/avoid-removeChild": "error",
     "mozilla/use-includes-instead-of-indexOf": "error",
@@ -46,12 +53,32 @@
     }],
     "unicorn/no-abusive-eslint-disable": "error",
     "unicorn/no-array-push-push": "error",
-    "unicorn/no-new-buffer": "error",
     "unicorn/no-instanceof-array": "error",
+    "unicorn/no-invalid-remove-event-listener": "error",
+    "unicorn/no-new-buffer": "error",
+    "unicorn/no-typeof-undefined": ["error", {
+      "checkGlobalVariables": false,
+    }],
+    "unicorn/no-useless-promise-resolve-reject": "error",
     "unicorn/no-useless-spread": "error",
+    "unicorn/prefer-array-find": "error",
+    "unicorn/prefer-array-flat": "error",
+    "unicorn/prefer-array-flat-map": "error",
+    "unicorn/prefer-array-index-of": "error",
+    "unicorn/prefer-array-some": "error",
+    "unicorn/prefer-at": "error",
     "unicorn/prefer-date-now": "error",
+    "unicorn/prefer-dom-node-append": "error",
     "unicorn/prefer-dom-node-remove": "error",
+    "unicorn/prefer-logical-operator-over-ternary": "error",
+    "unicorn/prefer-modern-dom-apis": "error",
+    "unicorn/prefer-modern-math-apis": "error",
+    "unicorn/prefer-negative-index": "error",
+    "unicorn/prefer-optional-catch-binding": "error",
+    "unicorn/prefer-regexp-test": "error",
+    "unicorn/prefer-string-replace-all": "error",
     "unicorn/prefer-string-starts-ends-with": "error",
+    "unicorn/prefer-ternary": ["error", "only-single-line"],
 
     // Possible errors
     "for-direction": "error",
@@ -113,6 +140,7 @@
     "no-implied-eval": "error",
     "no-iterator": "error",
     "no-lone-blocks": "error",
+    "no-lonely-if": "error",
     "no-multi-str": "error",
     "no-new-func": "error",
     "no-new-wrappers": "error",
@@ -132,6 +160,7 @@
     "no-useless-escape": "error",
     "no-useless-return": "error",
     "prefer-promise-reject-errors": "error",
+    "prefer-spread": "error",
     "wrap-iife": ["error", "any"],
     "yoda": ["error", "never", {
       "exceptRange": true,
@@ -148,7 +177,7 @@
     "no-undef-init": "error",
     "no-undef": ["error", { "typeof": true, }],
     "no-unused-vars": ["error", {
-      "vars": "local",
+      "vars": "all",
       "args": "none",
     }],
     "no-use-before-define": ["error", {
@@ -177,6 +206,18 @@
       {
         "selector": "CallExpression[callee.name='assert'][arguments.length!=2]",
         "message": "`assert()` must always be invoked with two arguments.",
+      },
+      {
+        "selector": "CallExpression[callee.name='isCmd'][arguments.length<2]",
+        "message": "Use `instanceof Cmd` rather than `isCmd()` with one argument.",
+      },
+      {
+        "selector": "CallExpression[callee.name='isDict'][arguments.length<2]",
+        "message": "Use `instanceof Dict` rather than `isDict()` with one argument.",
+      },
+      {
+        "selector": "CallExpression[callee.name='isName'][arguments.length<2]",
+        "message": "Use `instanceof Name` rather than `isName()` with one argument.",
       },
       {
         "selector": "NewExpression[callee.name='Cmd']",

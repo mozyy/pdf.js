@@ -151,13 +151,17 @@ describe("parser", function () {
         expect(plusLexer.getNumber()).toEqual(205.88);
       });
 
-      it("should treat a single decimal point as zero", function () {
-        const input = new StringStream(".");
-        const lexer = new Lexer(input);
-        expect(lexer.getNumber()).toEqual(0);
+      it("should treat a single decimal point, or minus/plus sign, as zero", function () {
+        const validNums = [".", "-", "+", "-.", "+.", "-\r\n.", "+\r\n."];
+        for (const number of validNums) {
+          const validInput = new StringStream(number);
+          const validLexer = new Lexer(validInput);
 
-        const numbers = ["..", "-.", "+.", "-\r\n.", "+\r\n."];
-        for (const number of numbers) {
+          expect(validLexer.getNumber()).toEqual(0);
+        }
+
+        const invalidNums = ["..", ".-", ".+"];
+        for (const number of invalidNums) {
           const invalidInput = new StringStream(number);
           const invalidLexer = new Lexer(invalidInput);
 

@@ -66,4 +66,142 @@ describe("accessibility", () => {
       );
     });
   });
+
+  describe("Annotation", () => {
+    let pages;
+
+    beforeAll(async () => {
+      pages = await loadAndWait(
+        "tracemonkey_a11y.pdf",
+        ".textLayer .endOfContent"
+      );
+    });
+
+    afterAll(async () => {
+      await closePages(pages);
+    });
+
+    function getSpans(page) {
+      return page.evaluate(() => {
+        const elements = document.querySelectorAll(
+          `.textLayer span[aria-owns]:not([role="presentation"])`
+        );
+        const results = [];
+        for (const element of elements) {
+          results.push(element.innerText);
+        }
+        return results;
+      });
+    }
+
+    it("must check that some spans are linked to some annotations thanks to aria-owns", async () => {
+      await Promise.all(
+        pages.map(async ([browserName, page]) => {
+          const spanContents = await getSpans(page);
+
+          expect(spanContents)
+            .withContext(`In ${browserName}`)
+            .toEqual(["Languages", "@intel.com", "Abstract", "Introduction"]);
+        })
+      );
+    });
+  });
+
+  describe("Annotations order", () => {
+    let pages;
+
+    beforeAll(async () => {
+      pages = await loadAndWait("fields_order.pdf", ".annotationLayer");
+    });
+
+    afterAll(async () => {
+      await closePages(pages);
+    });
+
+    it("must check that the text fields are in the visual order", async () => {
+      await Promise.all(
+        pages.map(async ([browserName, page]) => {
+          const ids = await page.evaluate(() => {
+            const elements = document.querySelectorAll(
+              ".annotationLayer .textWidgetAnnotation"
+            );
+            const results = [];
+            for (const element of elements) {
+              results.push(element.getAttribute("data-annotation-id"));
+            }
+            return results;
+          });
+
+          expect(ids)
+            .withContext(`In ${browserName}`)
+            .toEqual(["32R", "30R", "31R", "34R", "29R", "33R"]);
+        })
+      );
+    });
+  });
+
+  describe("Stamp annotation accessibility", () => {
+    let pages;
+
+    beforeAll(async () => {
+      pages = await loadAndWait("tagged_stamp.pdf", ".annotationLayer");
+    });
+
+    afterAll(async () => {
+      await closePages(pages);
+    });
+
+    it("must check the id in aria-controls", async () => {
+      await Promise.all(
+        pages.map(async ([browserName, page]) => {
+          await page.waitForSelector(".annotationLayer");
+          const stampId = "pdfjs_internal_id_20R";
+          await page.click(`#${stampId}`);
+
+          const controlledId = await page.$eval(
+            "#pdfjs_internal_id_21R",
+            el => document.getElementById(el.getAttribute("aria-controls")).id
+          );
+          expect(controlledId)
+            .withContext(`In ${browserName}`)
+            .toEqual(stampId);
+        })
+      );
+    });
+
+    it("must check the aria-label linked to the stamp annotation", async () => {
+      await Promise.all(
+        pages.map(async ([browserName, page]) => {
+          await page.waitForSelector(".structTree");
+
+          const ariaLabel = await page.$eval(
+            ".structTree [role='figure']",
+            el => el.getAttribute("aria-label")
+          );
+          expect(ariaLabel)
+            .withContext(`In ${browserName}`)
+            .toEqual("Secondary text for stamp");
+        })
+      );
+    });
+
+    it("must check that the stamp annotation is linked to the struct tree", async () => {
+      await Promise.all(
+        pages.map(async ([browserName, page]) => {
+          await page.waitForSelector(".structTree");
+
+          const isLinkedToStampAnnotation = await page.$eval(
+            ".structTree [role='figure']",
+            el =>
+              document
+                .getElementById(el.getAttribute("aria-owns"))
+                .classList.contains("stampAnnotation")
+          );
+          expect(isLinkedToStampAnnotation)
+            .withContext(`In ${browserName}`)
+            .toEqual(true);
+        })
+      );
+    });
+  });
 });

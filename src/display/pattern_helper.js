@@ -13,14 +13,8 @@
  * limitations under the License.
  */
 
-import {
-  FormatError,
-  info,
-  shadow,
-  unreachable,
-  Util,
-  warn,
-} from "../shared/util.js";
+import { FormatError, info, unreachable, Util } from "../shared/util.js";
+import { getCurrentTransform } from "./display_utils.js";
 
 const PathType = {
   FILL: "Fill",
@@ -29,7 +23,7 @@ const PathType = {
 };
 
 function applyBoundingBox(ctx, bbox) {
-  if (!bbox || typeof Path2D === "undefined") {
+  if (!bbox) {
     return;
   }
   const width = bbox[2] - bbox[0];
@@ -95,7 +89,7 @@ class RadialAxialShadingPattern extends BaseShadingPattern {
     if (pathType === PathType.STROKE || pathType === PathType.FILL) {
       const ownerBBox = owner.current.getClippedPathBoundingBox(
         pathType,
-        ctx.mozCurrentTransform
+        getCurrentTransform(ctx)
       ) || [0, 0, 0, 0];
       // Create a canvas that is only as big as the current path. This doesn't
       // allow us to cache the pattern, but it generally creates much smaller
@@ -127,9 +121,9 @@ class RadialAxialShadingPattern extends BaseShadingPattern {
         ownerBBox[1],
       ]);
 
-      tmpCtx.transform.apply(tmpCtx, owner.baseTransform);
+      tmpCtx.transform(...owner.baseTransform);
       if (this.matrix) {
-        tmpCtx.transform.apply(tmpCtx, this.matrix);
+        tmpCtx.transform(...this.matrix);
       }
       applyBoundingBox(tmpCtx, this._bbox);
 
@@ -138,13 +132,7 @@ class RadialAxialShadingPattern extends BaseShadingPattern {
 
       pattern = ctx.createPattern(tmpCanvas.canvas, "no-repeat");
       const domMatrix = new DOMMatrix(inverse);
-      try {
-        pattern.setTransform(domMatrix);
-      } catch (ex) {
-        // Avoid rendering breaking completely in Firefox 78 ESR,
-        // and in Node.js (see issue 13724).
-        warn(`RadialAxialShadingPattern.getPattern: "${ex?.message}".`);
-      }
+      pattern.setTransform(domMatrix);
     } else {
       // Shading fills are applied relative to the current matrix which is also
       // how canvas gradients work, so there's no need to do anything special
@@ -212,12 +200,7 @@ function drawTriangle(data, context, p1, p2, p3, c1, c2, c3) {
   let xb, cbr, cbg, cbb;
   for (let y = minY; y <= maxY; y++) {
     if (y < y2) {
-      let k;
-      if (y < y1) {
-        k = 0;
-      } else {
-        k = (y1 - y) / (y1 - y2);
-      }
+      const k = y < y1 ? 0 : (y1 - y) / (y1 - y2);
       xa = x1 - (x1 - x2) * k;
       car = c1r - (c1r - c2r) * k;
       cag = c1g - (c1g - c2g) * k;
@@ -408,7 +391,7 @@ class MeshShadingPattern extends BaseShadingPattern {
     applyBoundingBox(ctx, this._bbox);
     let scale;
     if (pathType === PathType.SHADING) {
-      scale = Util.singularValueDecompose2dScale(ctx.mozCurrentTransform);
+      scale = Util.singularValueDecompose2dScale(getCurrentTransform(ctx));
     } else {
       // Obtain scale from matrix and current transformation matrix.
       scale = Util.singularValueDecompose2dScale(owner.baseTransform);
@@ -427,9 +410,9 @@ class MeshShadingPattern extends BaseShadingPattern {
     );
 
     if (pathType !== PathType.SHADING) {
-      ctx.setTransform.apply(ctx, owner.baseTransform);
+      ctx.setTransform(...owner.baseTransform);
       if (this.matrix) {
-        ctx.transform.apply(ctx, this.matrix);
+        ctx.transform(...this.matrix);
       }
     }
 
@@ -468,9 +451,7 @@ const PaintType = {
 
 class TilingPattern {
   // 10in @ 300dpi shall be enough.
-  static get MAX_PATTERN_SIZE() {
-    return shadow(this, "MAX_PATTERN_SIZE", 3000);
-  }
+  static MAX_PATTERN_SIZE = 3000;
 
   constructor(IR, color, ctx, canvasGraphicsFactory, baseTransform) {
     this.operatorList = IR[2];
@@ -563,7 +544,7 @@ class TilingPattern {
     let adjustedY0 = y0;
     let adjustedX1 = x1;
     let adjustedY1 = y1;
-    // Some bounding boxes have negative x0/y0 cordinates which will cause the
+    // Some bounding boxes have negative x0/y0 coordinates which will cause the
     // some of the drawing to be off of the canvas. To avoid this shift the
     // bounding box over.
     if (x0 < 0) {
@@ -577,9 +558,13 @@ class TilingPattern {
     tmpCtx.translate(-(dimx.scale * adjustedX0), -(dimy.scale * adjustedY0));
     graphics.transform(dimx.scale, 0, 0, dimy.scale, 0, 0);
 
+    // To match CanvasGraphics beginDrawing we must save the context here or
+    // else we end up with unbalanced save/restores.
+    tmpCtx.save();
+
     this.clipBbox(graphics, adjustedX0, adjustedY0, adjustedX1, adjustedY1);
 
-    graphics.baseTransform = graphics.ctx.mozCurrentTransform.slice();
+    graphics.baseTransform = getCurrentTransform(graphics.ctx);
 
     graphics.executeOperatorList(operatorList);
 
@@ -615,6 +600,12 @@ class TilingPattern {
     const bboxWidth = x1 - x0;
     const bboxHeight = y1 - y0;
     graphics.ctx.rect(x0, y0, bboxWidth, bboxHeight);
+    graphics.current.updateRectMinMax(getCurrentTransform(graphics.ctx), [
+      x0,
+      y0,
+      x1,
+      y1,
+    ]);
     graphics.clip();
     graphics.endPath();
   }
@@ -668,13 +659,8 @@ class TilingPattern {
     );
 
     const pattern = ctx.createPattern(temporaryPatternCanvas.canvas, "repeat");
-    try {
-      pattern.setTransform(domMatrix);
-    } catch (ex) {
-      // Avoid rendering breaking completely in Firefox 78 ESR,
-      // and in Node.js (see issue 13724).
-      warn(`TilingPattern.getPattern: "${ex?.message}".`);
-    }
+    pattern.setTransform(domMatrix);
+
     return pattern;
   }
 }

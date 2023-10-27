@@ -14,6 +14,7 @@
  */
 
 import { FindState } from "./pdf_find_controller.js";
+import { toggleExpandedBtn } from "./ui_utils.js";
 
 const MATCHES_COUNT_LIMIT = 1000;
 
@@ -32,6 +33,7 @@ class PDFFindBar {
     this.findField = options.findField;
     this.highlightAll = options.highlightAllCheckbox;
     this.caseSensitive = options.caseSensitiveCheckbox;
+    this.matchDiacritics = options.matchDiacriticsCheckbox;
     this.entireWord = options.entireWordCheckbox;
     this.findMsg = options.findMsg;
     this.findResultsCount = options.findResultsCount;
@@ -82,7 +84,11 @@ class PDFFindBar {
       this.dispatchEvent("entirewordchange");
     });
 
-    this.eventBus._on("resize", this._adjustWidth.bind(this));
+    this.matchDiacritics.addEventListener("click", () => {
+      this.dispatchEvent("diacriticmatchingchange");
+    });
+
+    this.eventBus._on("resize", this.#adjustWidth.bind(this));
   }
 
   reset() {
@@ -94,11 +100,11 @@ class PDFFindBar {
       source: this,
       type,
       query: this.findField.value,
-      phraseSearch: true,
       caseSensitive: this.caseSensitive.checked,
       entireWord: this.entireWord.checked,
       highlightAll: this.highlightAll.checked,
       findPrevious: findPrev,
+      matchDiacritics: this.matchDiacritics.checked,
     });
   }
 
@@ -121,10 +127,12 @@ class PDFFindBar {
         break;
     }
     this.findField.setAttribute("data-status", status);
+    this.findField.setAttribute("aria-invalid", state === FindState.NOT_FOUND);
 
     findMsg.then(msg => {
+      this.findMsg.setAttribute("data-status", status);
       this.findMsg.textContent = msg;
-      this._adjustWidth();
+      this.#adjustWidth();
     });
 
     this.updateResultsCount(matchesCount);
@@ -157,24 +165,21 @@ class PDFFindBar {
     }
     matchCountMsg.then(msg => {
       this.findResultsCount.textContent = msg;
-      this.findResultsCount.classList.toggle("hidden", !total);
       // Since `updateResultsCount` may be called from `PDFFindController`,
       // ensure that the width of the findbar is always updated correctly.
-      this._adjustWidth();
+      this.#adjustWidth();
     });
   }
 
   open() {
     if (!this.opened) {
       this.opened = true;
-      this.toggleButton.classList.add("toggled");
-      this.toggleButton.setAttribute("aria-expanded", "true");
-      this.bar.classList.remove("hidden");
+      toggleExpandedBtn(this.toggleButton, true, this.bar);
     }
     this.findField.select();
     this.findField.focus();
 
-    this._adjustWidth();
+    this.#adjustWidth();
   }
 
   close() {
@@ -182,9 +187,7 @@ class PDFFindBar {
       return;
     }
     this.opened = false;
-    this.toggleButton.classList.remove("toggled");
-    this.toggleButton.setAttribute("aria-expanded", "false");
-    this.bar.classList.add("hidden");
+    toggleExpandedBtn(this.toggleButton, false, this.bar);
 
     this.eventBus.dispatch("findbarclose", { source: this });
   }
@@ -197,10 +200,7 @@ class PDFFindBar {
     }
   }
 
-  /**
-   * @private
-   */
-  _adjustWidth() {
+  #adjustWidth() {
     if (!this.opened) {
       return;
     }

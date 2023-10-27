@@ -15,6 +15,20 @@
 
 :root {
   --xfa-unfocused-field-background: url("data:image/svg+xml;charset=UTF-8,<svg width='1px' height='1px' xmlns='http://www.w3.org/2000/svg'><rect width='100%' height='100%' style='fill:rgba(0, 54, 255, 0.13);'/></svg>");
+  --xfa-focus-outline: auto;
+}
+
+@media screen and (forced-colors: active) {
+  :root {
+    --xfa-focus-outline: 2px solid CanvasText;
+  }
+  .xfaLayer *:required {
+    outline: 1.5px solid selectedItem;
+  }
+}
+
+.xfaLayer {
+  background-color: transparent;
 }
 
 .xfaLayer .highlight {
@@ -42,10 +56,6 @@
 
 .xfaLayer .highlight.selected {
   background-color: rgba(203, 223, 203, 1);
-}
-
-.xfaLayer ::selection {
-  background: rgba(0, 0, 255, 1);
 }
 
 .xfaPage {
@@ -87,14 +97,12 @@
   line-height: inherit;
 }
 
-.xfaLayer div {
-  pointer-events: none;
+.xfaLayer *:required {
+  outline: 1.5px solid red;
 }
 
-.xfaLayer svg {
-  pointer-events: none;
-}
-
+.xfaLayer div,
+.xfaLayer svg,
 .xfaLayer svg * {
   pointer-events: none;
 }
@@ -145,10 +153,7 @@
   align-items: center;
 }
 
-.xfaLeft > .xfaCaption,
-.xfaLeft > .xfaCaptionForCheckButton,
-.xfaRight > .xfaCaption,
-.xfaRight > .xfaCaptionForCheckButton {
+:is(.xfaLeft, .xfaRight) > :is(.xfaCaption, .xfaCaptionForCheckButton) {
   max-height: 100%;
 }
 
@@ -164,10 +169,7 @@
   align-items: flex-start;
 }
 
-.xfaTop > .xfaCaption,
-.xfaTop > .xfaCaptionForCheckButton,
-.xfaBottom > .xfaCaption,
-.xfaBottom > .xfaCaptionForCheckButton {
+:is(.xfaTop, .xfaBottom) > :is(.xfaCaption, .xfaCaptionForCheckButton) {
   width: 100%;
 }
 
@@ -182,17 +184,15 @@
   height: 100%;
 }
 
-.xfaTextfield:focus,
-.xfaSelect:focus {
+:is(.xfaTextfield, .xfaSelect):focus {
   background-image: none;
   background-color: transparent;
-  outline: auto;
+  outline: var(--xfa-focus-outline);
   outline-offset: -1px;
 }
 
-.xfaCheckbox:focus,
-.xfaRadio:focus {
-  outline: auto;
+:is(.xfaCheckbox, .xfaRadio):focus {
+  outline: var(--xfa-focus-outline);
 }
 
 .xfaTextfield,
@@ -205,10 +205,11 @@
   background-image: var(--xfa-unfocused-field-background);
 }
 
-.xfaTop > .xfaTextfield,
-.xfaTop > .xfaSelect,
-.xfaBottom > .xfaTextfield,
-.xfaBottom > .xfaSelect {
+.xfaSelect {
+  padding-inline: 2px;
+}
+
+:is(.xfaTop, .xfaBottom) > :is(.xfaTextfield, .xfaSelect) {
   flex: 0 1 auto;
 }
 
@@ -309,12 +310,7 @@
   flex: 1;
 }
 
-.xfaNonInteractive input,
-.xfaNonInteractive textarea,
-.xfaDisabled input,
-.xfaDisabled textarea,
-.xfaReadOnly input,
-.xfaReadOnly textarea {
+:is(.xfaNonInteractive, .xfaDisabled, .xfaReadOnly) :is(input, textarea) {
   background: initial;
 }
 

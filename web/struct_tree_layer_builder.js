@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-/** @typedef {import("../src/display/api").PDFPageProxy} PDFPageProxy */
+import { removeNullCharacters } from "./ui_utils.js";
 
 const PDF_ROLE_TO_HTML_ROLE = {
   // Document level structure types
@@ -73,36 +73,51 @@ const PDF_ROLE_TO_HTML_ROLE = {
 
 const HEADING_PATTERN = /^H(\d+)$/;
 
-/**
- * @typedef {Object} StructTreeLayerBuilderOptions
- * @property {PDFPageProxy} pdfPage
- */
-
 class StructTreeLayerBuilder {
-  /**
-   * @param {StructTreeLayerBuilderOptions} options
-   */
-  constructor({ pdfPage }) {
-    this.pdfPage = pdfPage;
+  #treeDom = undefined;
+
+  get renderingDone() {
+    return this.#treeDom !== undefined;
   }
 
   render(structTree) {
-    return this._walk(structTree);
+    if (this.#treeDom !== undefined) {
+      return this.#treeDom;
+    }
+    const treeDom = this.#walk(structTree);
+    treeDom?.classList.add("structTree");
+    return (this.#treeDom = treeDom);
   }
 
-  _setAttributes(structElement, htmlElement) {
-    if (structElement.alt !== undefined) {
-      htmlElement.setAttribute("aria-label", structElement.alt);
-    }
-    if (structElement.id !== undefined) {
-      htmlElement.setAttribute("aria-owns", structElement.id);
-    }
-    if (structElement.lang !== undefined) {
-      htmlElement.setAttribute("lang", structElement.lang);
+  hide() {
+    if (this.#treeDom && !this.#treeDom.hidden) {
+      this.#treeDom.hidden = true;
     }
   }
 
-  _walk(node) {
+  show() {
+    if (this.#treeDom?.hidden) {
+      this.#treeDom.hidden = false;
+    }
+  }
+
+  #setAttributes(structElement, htmlElement) {
+    const { alt, id, lang } = structElement;
+    if (alt !== undefined) {
+      htmlElement.setAttribute("aria-label", removeNullCharacters(alt));
+    }
+    if (id !== undefined) {
+      htmlElement.setAttribute("aria-owns", id);
+    }
+    if (lang !== undefined) {
+      htmlElement.setAttribute(
+        "lang",
+        removeNullCharacters(lang, /* replaceInvisible = */ true)
+      );
+    }
+  }
+
+  #walk(node) {
     if (!node) {
       return null;
     }
@@ -119,16 +134,16 @@ class StructTreeLayerBuilder {
       }
     }
 
-    this._setAttributes(node, element);
+    this.#setAttributes(node, element);
 
     if (node.children) {
       if (node.children.length === 1 && "id" in node.children[0]) {
         // Often there is only one content node so just set the values on the
         // parent node to avoid creating an extra span.
-        this._setAttributes(node.children[0], element);
+        this.#setAttributes(node.children[0], element);
       } else {
         for (const kid of node.children) {
-          element.appendChild(this._walk(kid));
+          element.append(this.#walk(kid));
         }
       }
     }

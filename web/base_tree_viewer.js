@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-import { removeNullCharacters } from "pdfjs-lib";
+import { removeNullCharacters } from "./ui_utils.js";
 
 const TREEITEM_OFFSET_TOP = -100; // px
 const TREEITEM_SELECTED_CLASS = "selected";
@@ -87,7 +87,7 @@ class BaseTreeViewer {
         this._toggleTreeItem(div, shouldShowAll);
       }
     };
-    div.insertBefore(toggler, div.firstChild);
+    div.prepend(toggler);
   }
 
   /**
@@ -122,7 +122,7 @@ class BaseTreeViewer {
 
       this._lastToggleIsShow = !fragment.querySelector(".treeItemsHidden");
     }
-    this.container.appendChild(fragment);
+    this.container.append(fragment);
 
     this._dispatchEvent(count);
   }

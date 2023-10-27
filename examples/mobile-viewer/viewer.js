@@ -20,7 +20,7 @@ if (!pdfjsLib.getDocument || !pdfjsViewer.PDFViewer) {
   alert("Please build the pdfjs-dist library using\n `gulp dist-install`");
 }
 
-const USE_ONLY_CSS_ZOOM = true;
+const MAX_CANVAS_PIXELS = 0; // CSS-only zooming.
 const TEXT_LAYER_MODE = 0; // DISABLE
 const MAX_IMAGE_SIZE = 1024 * 1024;
 const CMAP_URL = "../../node_modules/pdfjs-dist/cmaps/";
@@ -82,7 +82,9 @@ const PDFViewerApplication = {
         self.pdfDocument = pdfDocument;
         self.pdfViewer.setDocument(pdfDocument);
         self.pdfLinkService.setDocument(pdfDocument);
-        self.pdfHistory.initialize({ fingerprint: pdfDocument.fingerprint });
+        self.pdfHistory.initialize({
+          fingerprint: pdfDocument.fingerprints[0],
+        });
 
         self.loadingBar.hide();
         self.setTitleUsingMetadata(pdfDocument);
@@ -159,9 +161,12 @@ const PDFViewerApplication = {
   },
 
   get loadingBar() {
-    const bar = new pdfjsViewer.ProgressBar("#loadingBar", {});
-
-    return pdfjsLib.shadow(this, "loadingBar", bar);
+    const bar = document.getElementById("loadingBar");
+    return pdfjsLib.shadow(
+      this,
+      "loadingBar",
+      new pdfjsViewer.ProgressBar(bar)
+    );
   },
 
   setTitleUsingUrl: function pdfViewSetTitleUsingUrl(url) {
@@ -169,7 +174,7 @@ const PDFViewerApplication = {
     let title = pdfjsLib.getFilenameFromUrl(url) || url;
     try {
       title = decodeURIComponent(title);
-    } catch (e) {
+    } catch {
       // decodeURIComponent may throw URIError,
       // fall back to using the unprocessed url in that case
     }
@@ -187,7 +192,7 @@ const PDFViewerApplication = {
       // Provides some basic debug information
       console.log(
         "PDF " +
-          pdfDocument.fingerprint +
+          pdfDocument.fingerprints[0] +
           " [" +
           info.PDFFormatVersion +
           " " +
@@ -358,7 +363,7 @@ const PDFViewerApplication = {
       eventBus,
       linkService,
       l10n: this.l10n,
-      useOnlyCssZoom: USE_ONLY_CSS_ZOOM,
+      maxCanvasPixels: MAX_CANVAS_PIXELS,
       textLayerMode: TEXT_LAYER_MODE,
     });
     this.pdfViewer = pdfViewer;

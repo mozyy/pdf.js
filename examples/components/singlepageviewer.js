@@ -66,7 +66,6 @@ const pdfSinglePageViewer = new pdfjsViewer.PDFSinglePageViewer({
   linkService: pdfLinkService,
   findController: pdfFindController,
   scriptingManager: pdfScriptingManager,
-  enableScripting: true, // Only necessary in PDF.js version 2.10.377 and below.
 });
 pdfLinkService.setViewer(pdfSinglePageViewer);
 pdfScriptingManager.setViewer(pdfSinglePageViewer);
@@ -77,11 +76,7 @@ eventBus.on("pagesinit", function () {
 
   // We can try searching for things.
   if (SEARCH_FOR) {
-    if (!pdfFindController._onFind) {
-      pdfFindController.executeCommand("find", { query: SEARCH_FOR });
-    } else {
-      eventBus.dispatch("find", { type: "", query: SEARCH_FOR });
-    }
+    eventBus.dispatch("find", { type: "", query: SEARCH_FOR });
   }
 });
 

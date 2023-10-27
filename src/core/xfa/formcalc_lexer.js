@@ -80,7 +80,7 @@ const TOKEN = {
   string: 22,
   this: 23,
   times: 24,
-  identifier: 25, // in main statments too
+  identifier: 25, // in main statements too
 
   /* Main statements */
   break: 26,
@@ -239,8 +239,8 @@ class Lexer {
 
   getNumber(first) {
     const match = this.data.substring(this.pos).match(numberPattern);
-    if (!match) {
-      return first - 0x30 /* = 0 */;
+    if (!match[0]) {
+      return new Token(TOKEN.number, first - 0x30 /* = 0 */);
     }
     const number = parseFloat(
       this.data.substring(this.pos - 1, this.pos + match[0].length)

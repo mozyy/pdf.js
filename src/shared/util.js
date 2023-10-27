@@ -12,11 +12,29 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+/* globals process */
 
-import "./compatibility.js";
+// NW.js / Electron is a browser context, but copies some Node.js objects; see
+// http://docs.nwjs.io/en/latest/For%20Users/Advanced/JavaScript%20Contexts%20in%20NW.js/#access-nodejs-and-nwjs-api-in-browser-context
+// https://www.electronjs.org/docs/api/process#processversionselectron-readonly
+// https://www.electronjs.org/docs/api/process#processtype-readonly
+const isNodeJS =
+  (typeof PDFJSDev === "undefined" || PDFJSDev.test("GENERIC")) &&
+  typeof process === "object" &&
+  process + "" === "[object process]" &&
+  !process.versions.nw &&
+  !(process.versions.electron && process.type && process.type !== "browser");
 
 const IDENTITY_MATRIX = [1, 0, 0, 1, 0, 0];
 const FONT_IDENTITY_MATRIX = [0.001, 0, 0, 0.001, 0, 0];
+
+const MAX_IMAGE_SIZE_TO_CACHE = 10e6; // Ten megabytes.
+
+// Represent the percentage of the height of a single-line field over
+// the font size. Acrobat seems to use this value.
+const LINE_FACTOR = 1.35;
+const LINE_DESCENT_FACTOR = 0.35;
+const BASELINE_FACTOR = LINE_DESCENT_FACTOR / LINE_FACTOR;
 
 /**
  * Refer to the `WorkerTransport.getRenderingIntent`-method in the API, to see
@@ -34,6 +52,7 @@ const RenderingIntentFlag = {
   ANY: 0x01,
   DISPLAY: 0x02,
   PRINT: 0x04,
+  SAVE: 0x08,
   ANNOTATIONS_FORMS: 0x10,
   ANNOTATIONS_STORAGE: 0x20,
   ANNOTATIONS_DISABLE: 0x40,
@@ -45,6 +64,27 @@ const AnnotationMode = {
   ENABLE: 1,
   ENABLE_FORMS: 2,
   ENABLE_STORAGE: 3,
+};
+
+const AnnotationEditorPrefix = "pdfjs_internal_editor_";
+
+const AnnotationEditorType = {
+  DISABLE: -1,
+  NONE: 0,
+  FREETEXT: 3,
+  STAMP: 13,
+  INK: 15,
+};
+
+const AnnotationEditorParamsType = {
+  RESIZE: 1,
+  CREATE: 2,
+  FREETEXT_SIZE: 11,
+  FREETEXT_COLOR: 12,
+  FREETEXT_OPACITY: 13,
+  INK_COLOR: 21,
+  INK_THICKNESS: 22,
+  INK_OPACITY: 23,
 };
 
 // Permission flags from Table 22, Section 7.6.3.2 of the PDF specification.
@@ -105,24 +145,6 @@ const AnnotationType = {
   WATERMARK: 24,
   THREED: 25,
   REDACT: 26,
-};
-
-const AnnotationStateModelType = {
-  MARKED: "Marked",
-  REVIEW: "Review",
-};
-
-const AnnotationMarkedState = {
-  MARKED: "Marked",
-  UNMARKED: "Unmarked",
-};
-
-const AnnotationReviewState = {
-  ACCEPTED: "Accepted",
-  REJECTED: "Rejected",
-  CANCELLED: "Cancelled",
-  COMPLETED: "Completed",
-  NONE: "None",
 };
 
 const AnnotationReplyType = {
@@ -203,34 +225,6 @@ const PageActionEventType = {
   C: "PageClose",
 };
 
-const StreamType = {
-  UNKNOWN: "UNKNOWN",
-  FLATE: "FLATE",
-  LZW: "LZW",
-  DCT: "DCT",
-  JPX: "JPX",
-  JBIG: "JBIG",
-  A85: "A85",
-  AHX: "AHX",
-  CCF: "CCF",
-  RLX: "RLX", // PDF short name is 'RL', but telemetry requires three chars.
-};
-
-const FontType = {
-  UNKNOWN: "UNKNOWN",
-  TYPE1: "TYPE1",
-  TYPE1STANDARD: "TYPE1STANDARD",
-  TYPE1C: "TYPE1C",
-  CIDFONTTYPE0: "CIDFONTTYPE0",
-  CIDFONTTYPE0C: "CIDFONTTYPE0C",
-  TRUETYPE: "TRUETYPE",
-  CIDFONTTYPE2: "CIDFONTTYPE2",
-  TYPE3: "TYPE3",
-  OPENTYPE: "OPENTYPE",
-  TYPE0: "TYPE0",
-  MMTYPE1: "MMTYPE1",
-};
-
 const VerbosityLevel = {
   ERRORS: 0,
   WARNINGS: 1,
@@ -240,13 +234,14 @@ const VerbosityLevel = {
 const CMapCompressionType = {
   NONE: 0,
   BINARY: 1,
-  STREAM: 2,
 };
 
 // All the possible operations for an operator list.
 const OPS = {
   // Intentionally start from 1 so it is easy to spot bad operators that will be
   // 0's.
+  // PLEASE NOTE: We purposely keep any removed operators commented out, since
+  //              re-numbering the list would risk breaking third-party users.
   dependency: 1,
   setLineWidth: 2,
   setLineCap: 3,
@@ -324,12 +319,11 @@ const OPS = {
   paintFormXObjectEnd: 75,
   beginGroup: 76,
   endGroup: 77,
-  beginAnnotations: 78,
-  endAnnotations: 79,
+  // beginAnnotations: 78,
+  // endAnnotations: 79,
   beginAnnotation: 80,
   endAnnotation: 81,
-  /** @deprecated unused */
-  paintJpegXObject: 82,
+  // paintJpegXObject: 82,
   paintImageMaskXObject: 83,
   paintImageMaskXObjectGroup: 84,
   paintImageXObject: 85,
@@ -339,33 +333,6 @@ const OPS = {
   paintImageMaskXObjectRepeat: 89,
   paintSolidColorImageMask: 90,
   constructPath: 91,
-};
-
-const UNSUPPORTED_FEATURES = {
-  /** @deprecated unused */
-  unknown: "unknown",
-  forms: "forms",
-  javaScript: "javaScript",
-  signatures: "signatures",
-  smask: "smask",
-  shadingPattern: "shadingPattern",
-  /** @deprecated unused */
-  font: "font",
-  errorTilingPattern: "errorTilingPattern",
-  errorExtGState: "errorExtGState",
-  errorXObject: "errorXObject",
-  errorFontLoadType3: "errorFontLoadType3",
-  errorFontState: "errorFontState",
-  errorFontMissing: "errorFontMissing",
-  errorFontTranslate: "errorFontTranslate",
-  errorColorSpace: "errorColorSpace",
-  errorOperatorList: "errorOperatorList",
-  errorFontToUnicode: "errorFontToUnicode",
-  errorFontLoadNative: "errorFontLoadNative",
-  errorFontBuildPath: "errorFontBuildPath",
-  errorFontGetPath: "errorFontGetPath",
-  errorMarkedContent: "errorMarkedContent",
-  errorContentSubStream: "errorContentSubStream",
 };
 
 const PasswordResponses = {
@@ -411,28 +378,9 @@ function assert(cond, msg) {
   }
 }
 
-// Checks if URLs have the same origin. For non-HTTP based URLs, returns false.
-function isSameOrigin(baseUrl, otherUrl) {
-  let base;
-  try {
-    base = new URL(baseUrl);
-    if (!base.origin || base.origin === "null") {
-      return false; // non-HTTP url
-    }
-  } catch (e) {
-    return false;
-  }
-
-  const other = new URL(otherUrl, base);
-  return base.origin === other.origin;
-}
-
 // Checks if URLs use one of the allowed protocols, e.g. to avoid XSS.
 function _isValidProtocol(url) {
-  if (!url) {
-    return false;
-  }
-  switch (url.protocol) {
+  switch (url?.protocol) {
     case "http:":
     case "https:":
     case "ftp:":
@@ -463,7 +411,7 @@ function createValidAbsoluteUrl(url, baseUrl = null, options = null) {
         const dots = url.match(/\./g);
         // Avoid accidentally matching a *relative* URL pointing to a file named
         // e.g. "www.pdf" or similar.
-        if (dots && dots.length >= 2) {
+        if (dots?.length >= 2) {
           url = `http://${url}`;
         }
       }
@@ -473,7 +421,7 @@ function createValidAbsoluteUrl(url, baseUrl = null, options = null) {
       if (options.tryConvertEncoding) {
         try {
           url = stringToUTF8String(url);
-        } catch (ex) {}
+        } catch {}
       }
     }
 
@@ -481,17 +429,14 @@ function createValidAbsoluteUrl(url, baseUrl = null, options = null) {
     if (_isValidProtocol(absoluteUrl)) {
       return absoluteUrl;
     }
-  } catch (ex) {
+  } catch {
     /* `new URL()` will throw on incorrect data. */
   }
   return null;
 }
 
-function shadow(obj, prop, value) {
-  if (
-    typeof PDFJSDev === "undefined" ||
-    PDFJSDev.test("!PRODUCTION || TESTING")
-  ) {
+function shadow(obj, prop, value, nonSerializable = false) {
+  if (typeof PDFJSDev === "undefined" || PDFJSDev.test("TESTING")) {
     assert(
       prop in obj,
       `shadow: Property "${prop && prop.toString()}" not found in object.`
@@ -499,7 +444,7 @@ function shadow(obj, prop, value) {
   }
   Object.defineProperty(obj, prop, {
     value,
-    enumerable: true,
+    enumerable: !nonSerializable,
     configurable: true,
     writable: false,
   });
@@ -575,28 +520,10 @@ class AbortException extends BaseException {
   }
 }
 
-const NullCharactersRegExp = /\x00+/g;
-const InvisibleCharactersRegExp = /[\x01-\x1F]/g;
-
-/**
- * @param {string} str
- */
-function removeNullCharacters(str, replaceInvisible = false) {
-  if (typeof str !== "string") {
-    warn("The argument for removeNullCharacters must be a string.");
-    return str;
-  }
-  if (replaceInvisible) {
-    str = str.replace(InvisibleCharactersRegExp, " ");
-  }
-  return str.replace(NullCharactersRegExp, "");
-}
-
 function bytesToString(bytes) {
-  assert(
-    bytes !== null && typeof bytes === "object" && bytes.length !== undefined,
-    "Invalid argument for bytesToString"
-  );
+  if (typeof bytes !== "object" || bytes?.length === undefined) {
+    unreachable("Invalid argument for bytesToString");
+  }
   const length = bytes.length;
   const MAX_ARGUMENT_COUNT = 8192;
   if (length < MAX_ARGUMENT_COUNT) {
@@ -612,7 +539,9 @@ function bytesToString(bytes) {
 }
 
 function stringToBytes(str) {
-  assert(typeof str === "string", "Invalid argument for stringToBytes");
+  if (typeof str !== "string") {
+    unreachable("Invalid argument for stringToBytes");
+  }
   const length = str.length;
   const bytes = new Uint8Array(length);
   for (let i = 0; i < length; ++i) {
@@ -621,58 +550,8 @@ function stringToBytes(str) {
   return bytes;
 }
 
-/**
- * Gets length of the array (Array, Uint8Array, or string) in bytes.
- * @param {Array<any>|Uint8Array|string} arr
- * @returns {number}
- */
-function arrayByteLength(arr) {
-  if (arr.length !== undefined) {
-    return arr.length;
-  }
-  assert(arr.byteLength !== undefined, "arrayByteLength - invalid argument.");
-  return arr.byteLength;
-}
-
-/**
- * Combines array items (arrays) into single Uint8Array object.
- * @param {Array<Array<any>|Uint8Array|string>} arr - the array of the arrays
- *   (Array, Uint8Array, or string).
- * @returns {Uint8Array}
- */
-function arraysToBytes(arr) {
-  const length = arr.length;
-  // Shortcut: if first and only item is Uint8Array, return it.
-  if (length === 1 && arr[0] instanceof Uint8Array) {
-    return arr[0];
-  }
-  let resultLength = 0;
-  for (let i = 0; i < length; i++) {
-    resultLength += arrayByteLength(arr[i]);
-  }
-  let pos = 0;
-  const data = new Uint8Array(resultLength);
-  for (let i = 0; i < length; i++) {
-    let item = arr[i];
-    if (!(item instanceof Uint8Array)) {
-      if (typeof item === "string") {
-        item = stringToBytes(item);
-      } else {
-        item = new Uint8Array(item);
-      }
-    }
-    const itemLength = item.byteLength;
-    data.set(item, pos);
-    pos += itemLength;
-  }
-  return data;
-}
-
 function string32(value) {
-  if (
-    typeof PDFJSDev === "undefined" ||
-    PDFJSDev.test("!PRODUCTION || TESTING")
-  ) {
+  if (typeof PDFJSDev === "undefined" || PDFJSDev.test("TESTING")) {
     assert(
       typeof value === "number" && Math.abs(value) < 2 ** 32,
       `string32: Unexpected input "${value}".`
@@ -707,26 +586,55 @@ function isLittleEndian() {
   const view32 = new Uint32Array(buffer8.buffer, 0, 1);
   return view32[0] === 1;
 }
-const IsLittleEndianCached = {
-  get value() {
-    return shadow(this, "value", isLittleEndian());
-  },
-};
 
 // Checks if it's possible to eval JS expressions.
 function isEvalSupported() {
   try {
     new Function(""); // eslint-disable-line no-new, no-new-func
     return true;
-  } catch (e) {
+  } catch {
     return false;
   }
 }
-const IsEvalSupportedCached = {
-  get value() {
-    return shadow(this, "value", isEvalSupported());
-  },
-};
+
+class FeatureTest {
+  static get isLittleEndian() {
+    return shadow(this, "isLittleEndian", isLittleEndian());
+  }
+
+  static get isEvalSupported() {
+    return shadow(this, "isEvalSupported", isEvalSupported());
+  }
+
+  static get isOffscreenCanvasSupported() {
+    return shadow(
+      this,
+      "isOffscreenCanvasSupported",
+      typeof OffscreenCanvas !== "undefined"
+    );
+  }
+
+  static get platform() {
+    if (
+      (typeof PDFJSDev === "undefined" || PDFJSDev.test("GENERIC")) &&
+      typeof navigator === "undefined"
+    ) {
+      return shadow(this, "platform", { isWin: false, isMac: false });
+    }
+    return shadow(this, "platform", {
+      isWin: navigator.platform.includes("Win"),
+      isMac: navigator.platform.includes("Mac"),
+    });
+  }
+
+  static get isCSSRoundSupported() {
+    return shadow(
+      this,
+      "isCSSRoundSupported",
+      globalThis.CSS?.supports?.("width: round(1.5px, 1px)")
+    );
+  }
+}
 
 const hexNumbers = [...Array(256).keys()].map(n =>
   n.toString(16).padStart(2, "0")
@@ -735,6 +643,57 @@ const hexNumbers = [...Array(256).keys()].map(n =>
 class Util {
   static makeHexColor(r, g, b) {
     return `#${hexNumbers[r]}${hexNumbers[g]}${hexNumbers[b]}`;
+  }
+
+  // Apply a scaling matrix to some min/max values.
+  // If a scaling factor is negative then min and max must be
+  // swaped.
+  static scaleMinMax(transform, minMax) {
+    let temp;
+    if (transform[0]) {
+      if (transform[0] < 0) {
+        temp = minMax[0];
+        minMax[0] = minMax[1];
+        minMax[1] = temp;
+      }
+      minMax[0] *= transform[0];
+      minMax[1] *= transform[0];
+
+      if (transform[3] < 0) {
+        temp = minMax[2];
+        minMax[2] = minMax[3];
+        minMax[3] = temp;
+      }
+      minMax[2] *= transform[3];
+      minMax[3] *= transform[3];
+    } else {
+      temp = minMax[0];
+      minMax[0] = minMax[2];
+      minMax[2] = temp;
+      temp = minMax[1];
+      minMax[1] = minMax[3];
+      minMax[3] = temp;
+
+      if (transform[1] < 0) {
+        temp = minMax[2];
+        minMax[2] = minMax[3];
+        minMax[3] = temp;
+      }
+      minMax[2] *= transform[1];
+      minMax[3] *= transform[1];
+
+      if (transform[2] < 0) {
+        temp = minMax[0];
+        minMax[0] = minMax[1];
+        minMax[1] = temp;
+      }
+      minMax[0] *= transform[2];
+      minMax[1] *= transform[2];
+    }
+    minMax[0] += transform[4];
+    minMax[1] += transform[4];
+    minMax[2] += transform[5];
+    minMax[3] += transform[5];
   }
 
   // Concatenates two transformation matrices together and returns the result.
@@ -766,10 +725,10 @@ class Util {
   // Applies the transform to the rectangle and finds the minimum axially
   // aligned bounding box.
   static getAxialAlignedBoundingBox(r, m) {
-    const p1 = Util.applyTransform(r, m);
-    const p2 = Util.applyTransform(r.slice(2, 4), m);
-    const p3 = Util.applyTransform([r[0], r[3]], m);
-    const p4 = Util.applyTransform([r[2], r[1]], m);
+    const p1 = this.applyTransform(r, m);
+    const p2 = this.applyTransform(r.slice(2, 4), m);
+    const p3 = this.applyTransform([r[0], r[3]], m);
+    const p4 = this.applyTransform([r[2], r[1]], m);
     return [
       Math.min(p1[0], p2[0], p3[0], p4[0]),
       Math.min(p1[1], p2[1], p3[1], p4[1]),
@@ -787,20 +746,6 @@ class Util {
       m[0] / d,
       (m[2] * m[5] - m[4] * m[3]) / d,
       (m[4] * m[1] - m[5] * m[0]) / d,
-    ];
-  }
-
-  // Apply a generic 3d matrix M on a 3-vector v:
-  //   | a b c |   | X |
-  //   | d e f | x | Y |
-  //   | g h i |   | Z |
-  // M is assumed to be serialized as [a,b,c,d,e,f,g,h,i],
-  // with v as [X,Y,Z]
-  static apply3dTransform(m, v) {
-    return [
-      m[0] * v[0] + m[1] * v[1] + m[2] * v[2],
-      m[3] * v[0] + m[4] * v[1] + m[5] * v[2],
-      m[6] * v[0] + m[7] * v[1] + m[8] * v[2],
     ];
   }
 
@@ -844,46 +789,33 @@ class Util {
   }
 
   // Returns a rectangle [x1, y1, x2, y2] corresponding to the
-  // intersection of rect1 and rect2. If no intersection, returns 'false'
+  // intersection of rect1 and rect2. If no intersection, returns 'null'
   // The rectangle coordinates of rect1, rect2 should be [x1, y1, x2, y2]
   static intersect(rect1, rect2) {
-    function compare(a, b) {
-      return a - b;
+    const xLow = Math.max(
+      Math.min(rect1[0], rect1[2]),
+      Math.min(rect2[0], rect2[2])
+    );
+    const xHigh = Math.min(
+      Math.max(rect1[0], rect1[2]),
+      Math.max(rect2[0], rect2[2])
+    );
+    if (xLow > xHigh) {
+      return null;
     }
-
-    // Order points along the axes
-    const orderedX = [rect1[0], rect1[2], rect2[0], rect2[2]].sort(compare);
-    const orderedY = [rect1[1], rect1[3], rect2[1], rect2[3]].sort(compare);
-    const result = [];
-
-    rect1 = Util.normalizeRect(rect1);
-    rect2 = Util.normalizeRect(rect2);
-
-    // X: first and second points belong to different rectangles?
-    if (
-      (orderedX[0] === rect1[0] && orderedX[1] === rect2[0]) ||
-      (orderedX[0] === rect2[0] && orderedX[1] === rect1[0])
-    ) {
-      // Intersection must be between second and third points
-      result[0] = orderedX[1];
-      result[2] = orderedX[2];
-    } else {
+    const yLow = Math.max(
+      Math.min(rect1[1], rect1[3]),
+      Math.min(rect2[1], rect2[3])
+    );
+    const yHigh = Math.min(
+      Math.max(rect1[1], rect1[3]),
+      Math.max(rect2[1], rect2[3])
+    );
+    if (yLow > yHigh) {
       return null;
     }
 
-    // Y: first and second points belong to different rectangles?
-    if (
-      (orderedY[0] === rect1[1] && orderedY[1] === rect2[1]) ||
-      (orderedY[0] === rect2[1] && orderedY[1] === rect1[1])
-    ) {
-      // Intersection must be between second and third points
-      result[1] = orderedY[1];
-      result[3] = orderedY[2];
-    } else {
-      return null;
-    }
-
-    return result;
+    return [xLow, yLow, xHigh, yHigh];
   }
 
   // From https://github.com/adobe-webplatform/Snap.svg/blob/b365287722a72526000ac4bfcf0ce4cac2faa015/src/path.js#L852
@@ -972,59 +904,33 @@ const PDFStringTranslateTable = [
 ];
 
 function stringToPDFString(str) {
-  const length = str.length,
-    strBuf = [];
-  if (str[0] === "\xFE" && str[1] === "\xFF") {
-    // UTF16BE BOM
-    for (let i = 2; i < length; i += 2) {
-      strBuf.push(
-        String.fromCharCode((str.charCodeAt(i) << 8) | str.charCodeAt(i + 1))
-      );
+  if (str[0] >= "\xEF") {
+    let encoding;
+    if (str[0] === "\xFE" && str[1] === "\xFF") {
+      encoding = "utf-16be";
+    } else if (str[0] === "\xFF" && str[1] === "\xFE") {
+      encoding = "utf-16le";
+    } else if (str[0] === "\xEF" && str[1] === "\xBB" && str[2] === "\xBF") {
+      encoding = "utf-8";
     }
-  } else if (str[0] === "\xFF" && str[1] === "\xFE") {
-    // UTF16LE BOM
-    for (let i = 2; i < length; i += 2) {
-      strBuf.push(
-        String.fromCharCode((str.charCodeAt(i + 1) << 8) | str.charCodeAt(i))
-      );
+
+    if (encoding) {
+      try {
+        const decoder = new TextDecoder(encoding, { fatal: true });
+        const buffer = stringToBytes(str);
+        return decoder.decode(buffer);
+      } catch (ex) {
+        warn(`stringToPDFString: "${ex}".`);
+      }
     }
-  } else {
-    for (let i = 0; i < length; ++i) {
-      const code = PDFStringTranslateTable[str.charCodeAt(i)];
-      strBuf.push(code ? String.fromCharCode(code) : str.charAt(i));
-    }
+  }
+  // ISO Latin 1
+  const strBuf = [];
+  for (let i = 0, ii = str.length; i < ii; i++) {
+    const code = PDFStringTranslateTable[str.charCodeAt(i)];
+    strBuf.push(code ? String.fromCharCode(code) : str.charAt(i));
   }
   return strBuf.join("");
-}
-
-function escapeString(str) {
-  // replace "(", ")", "\n", "\r" and "\"
-  // by "\(", "\)", "\\n", "\\r" and "\\"
-  // in order to write it in a PDF file.
-  return str.replace(/([()\\\n\r])/g, match => {
-    if (match === "\n") {
-      return "\\n";
-    } else if (match === "\r") {
-      return "\\r";
-    }
-    return `\\${match}`;
-  });
-}
-
-function isAscii(str) {
-  return /^[\x00-\x7F]*$/.test(str);
-}
-
-function stringToUTF16BEString(str) {
-  const buf = ["\xFE\xFF"];
-  for (let i = 0, ii = str.length; i < ii; i++) {
-    const char = str.charCodeAt(i);
-    buf.push(
-      String.fromCharCode((char >> 8) & 0xff),
-      String.fromCharCode(char & 0xff)
-    );
-  }
-  return buf.join("");
 }
 
 function stringToUTF8String(str) {
@@ -1035,20 +941,8 @@ function utf8StringToString(str) {
   return unescape(encodeURIComponent(str));
 }
 
-function isBool(v) {
-  return typeof v === "boolean";
-}
-
-function isNum(v) {
-  return typeof v === "number";
-}
-
-function isString(v) {
-  return typeof v === "string";
-}
-
 function isArrayBuffer(v) {
-  return typeof v === "object" && v !== null && v.byteLength !== undefined;
+  return typeof v === "object" && v?.byteLength !== undefined;
 }
 
 function isArrayEqual(arr1, arr2) {
@@ -1076,93 +970,110 @@ function getModificationDate(date = new Date()) {
   return buffer.join("");
 }
 
-/**
- * Promise Capability object.
- *
- * @typedef {Object} PromiseCapability
- * @property {Promise<any>} promise - A Promise object.
- * @property {boolean} settled - If the Promise has been fulfilled/rejected.
- * @property {function} resolve - Fulfills the Promise.
- * @property {function} reject - Rejects the Promise.
- */
+class PromiseCapability {
+  #settled = false;
 
-/**
- * Creates a promise capability object.
- * @alias createPromiseCapability
- *
- * @returns {PromiseCapability}
- */
-function createPromiseCapability() {
-  const capability = Object.create(null);
-  let isSettled = false;
+  constructor() {
+    /**
+     * @type {Promise<any>} The Promise object.
+     */
+    this.promise = new Promise((resolve, reject) => {
+      /**
+       * @type {function} Fulfills the Promise.
+       */
+      this.resolve = data => {
+        this.#settled = true;
+        resolve(data);
+      };
 
-  Object.defineProperty(capability, "settled", {
-    get() {
-      return isSettled;
-    },
-  });
-  capability.promise = new Promise(function (resolve, reject) {
-    capability.resolve = function (data) {
-      isSettled = true;
-      resolve(data);
-    };
-    capability.reject = function (reason) {
-      isSettled = true;
-      reject(reason);
-    };
-  });
-  return capability;
+      /**
+       * @type {function} Rejects the Promise.
+       */
+      this.reject = reason => {
+        if (typeof PDFJSDev === "undefined" || PDFJSDev.test("TESTING")) {
+          assert(reason instanceof Error, 'Expected valid "reason" argument.');
+        }
+        this.#settled = true;
+        reject(reason);
+      };
+    });
+  }
+
+  /**
+   * @type {boolean} If the Promise has been fulfilled/rejected.
+   */
+  get settled() {
+    return this.#settled;
+  }
 }
 
-function createObjectURL(data, contentType = "", forceDataSchema = false) {
-  if (URL.createObjectURL && typeof Blob !== "undefined" && !forceDataSchema) {
-    return URL.createObjectURL(new Blob([data], { type: contentType }));
+let NormalizeRegex = null;
+let NormalizationMap = null;
+function normalizeUnicode(str) {
+  if (!NormalizeRegex) {
+    // In order to generate the following regex:
+    //  - create a PDF containing all the chars in the range 0000-FFFF with
+    //    a NFKC which is different of the char.
+    //  - copy and paste all those chars and get the ones where NFKC is
+    //    required.
+    // It appears that most the chars here contain some ligatures.
+    NormalizeRegex =
+      /([\u00a0\u00b5\u037e\u0eb3\u2000-\u200a\u202f\u2126\ufb00-\ufb04\ufb06\ufb20-\ufb36\ufb38-\ufb3c\ufb3e\ufb40-\ufb41\ufb43-\ufb44\ufb46-\ufba1\ufba4-\ufba9\ufbae-\ufbb1\ufbd3-\ufbdc\ufbde-\ufbe7\ufbea-\ufbf8\ufbfc-\ufbfd\ufc00-\ufc5d\ufc64-\ufcf1\ufcf5-\ufd3d\ufd88\ufdf4\ufdfa-\ufdfb\ufe71\ufe77\ufe79\ufe7b\ufe7d]+)|(\ufb05+)/gu;
+    NormalizationMap = new Map([["ﬅ", "ſt"]]);
   }
-  // Blob/createObjectURL is not available, falling back to data schema.
-  const digits =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
-
-  let buffer = `data:${contentType};base64,`;
-  for (let i = 0, ii = data.length; i < ii; i += 3) {
-    const b1 = data[i] & 0xff;
-    const b2 = data[i + 1] & 0xff;
-    const b3 = data[i + 2] & 0xff;
-    const d1 = b1 >> 2,
-      d2 = ((b1 & 3) << 4) | (b2 >> 4);
-    const d3 = i + 1 < ii ? ((b2 & 0xf) << 2) | (b3 >> 6) : 64;
-    const d4 = i + 2 < ii ? b3 & 0x3f : 64;
-    buffer += digits[d1] + digits[d2] + digits[d3] + digits[d4];
-  }
-  return buffer;
+  return str.replaceAll(NormalizeRegex, (_, p1, p2) => {
+    return p1 ? p1.normalize("NFKC") : NormalizationMap.get(p2);
+  });
 }
+
+function getUuid() {
+  if (
+    (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) ||
+    (typeof crypto !== "undefined" && typeof crypto?.randomUUID === "function")
+  ) {
+    return crypto.randomUUID();
+  }
+  const buf = new Uint8Array(32);
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto?.getRandomValues === "function"
+  ) {
+    crypto.getRandomValues(buf);
+  } else {
+    for (let i = 0; i < 32; i++) {
+      buf[i] = Math.floor(Math.random() * 255);
+    }
+  }
+  return bytesToString(buf);
+}
+
+const AnnotationPrefix = "pdfjs_internal_id_";
 
 export {
   AbortException,
   AnnotationActionEventType,
   AnnotationBorderStyleType,
+  AnnotationEditorParamsType,
+  AnnotationEditorPrefix,
+  AnnotationEditorType,
   AnnotationFieldFlag,
   AnnotationFlag,
-  AnnotationMarkedState,
   AnnotationMode,
+  AnnotationPrefix,
   AnnotationReplyType,
-  AnnotationReviewState,
-  AnnotationStateModelType,
   AnnotationType,
-  arrayByteLength,
-  arraysToBytes,
   assert,
   BaseException,
+  BASELINE_FACTOR,
   bytesToString,
   CMapCompressionType,
-  createObjectURL,
-  createPromiseCapability,
   createValidAbsoluteUrl,
   DocumentActionEventType,
-  escapeString,
+  FeatureTest,
   FONT_IDENTITY_MATRIX,
-  FontType,
   FormatError,
   getModificationDate,
+  getUuid,
   getVerbosityLevel,
   IDENTITY_MATRIX,
   ImageKind,
@@ -1170,14 +1081,12 @@ export {
   InvalidPDFException,
   isArrayBuffer,
   isArrayEqual,
-  isAscii,
-  isBool,
-  IsEvalSupportedCached,
-  IsLittleEndianCached,
-  isNum,
-  isSameOrigin,
-  isString,
+  isNodeJS,
+  LINE_DESCENT_FACTOR,
+  LINE_FACTOR,
+  MAX_IMAGE_SIZE_TO_CACHE,
   MissingPDFException,
+  normalizeUnicode,
   objectFromMap,
   objectSize,
   OPS,
@@ -1185,21 +1094,18 @@ export {
   PasswordException,
   PasswordResponses,
   PermissionFlag,
-  removeNullCharacters,
+  PromiseCapability,
   RenderingIntentFlag,
   setVerbosityLevel,
   shadow,
-  StreamType,
   string32,
   stringToBytes,
   stringToPDFString,
-  stringToUTF16BEString,
   stringToUTF8String,
   TextRenderingMode,
   UnexpectedResponseException,
   UnknownErrorException,
   unreachable,
-  UNSUPPORTED_FEATURES,
   utf8StringToString,
   Util,
   VerbosityLevel,

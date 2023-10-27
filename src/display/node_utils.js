@@ -17,67 +17,93 @@
 import {
   BaseCanvasFactory,
   BaseCMapReaderFactory,
+  BaseFilterFactory,
   BaseStandardFontDataFactory,
 } from "./base_factory.js";
-import { isNodeJS } from "../shared/is_node.js";
-import { unreachable } from "../shared/util.js";
+import { isNodeJS, warn } from "../shared/util.js";
 
-let NodeCanvasFactory = class {
-  constructor() {
-    unreachable("Not implemented: NodeCanvasFactory");
-  }
-};
+if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) {
+  throw new Error(
+    'Module "./node_utils.js" shall not be used with MOZCENTRAL builds.'
+  );
+}
 
-let NodeCMapReaderFactory = class {
-  constructor() {
-    unreachable("Not implemented: NodeCMapReaderFactory");
-  }
-};
+if (typeof PDFJSDev !== "undefined" && !PDFJSDev.test("SKIP_BABEL")) {
+  (function checkDOMMatrix() {
+    if (globalThis.DOMMatrix || !isNodeJS) {
+      return;
+    }
+    try {
+      globalThis.DOMMatrix = __non_webpack_require__("canvas").DOMMatrix;
+    } catch (ex) {
+      warn(`Cannot polyfill \`DOMMatrix\`, rendering may be broken: "${ex}".`);
+    }
+  })();
 
-let NodeStandardFontDataFactory = class {
-  constructor() {
-    unreachable("Not implemented: NodeStandardFontDataFactory");
-  }
-};
+  (function checkPath2D() {
+    if (globalThis.Path2D || !isNodeJS) {
+      return;
+    }
+    try {
+      const { CanvasRenderingContext2D } = __non_webpack_require__("canvas");
+      const { polyfillPath2D } = __non_webpack_require__("path2d-polyfill");
 
-if ((typeof PDFJSDev === "undefined" || PDFJSDev.test("GENERIC")) && isNodeJS) {
-  const fetchData = function (url) {
-    return new Promise((resolve, reject) => {
-      const fs = __non_webpack_require__("fs");
-      fs.readFile(url, (error, data) => {
-        if (error || !data) {
-          reject(new Error(error));
-          return;
-        }
-        resolve(new Uint8Array(data));
-      });
+      globalThis.CanvasRenderingContext2D = CanvasRenderingContext2D;
+      polyfillPath2D(globalThis);
+    } catch (ex) {
+      warn(`Cannot polyfill \`Path2D\`, rendering may be broken: "${ex}".`);
+    }
+  })();
+}
+
+const fetchData = function (url) {
+  return new Promise((resolve, reject) => {
+    const fs = __non_webpack_require__("fs");
+    fs.readFile(url, (error, data) => {
+      if (error || !data) {
+        reject(new Error(error));
+        return;
+      }
+      resolve(new Uint8Array(data));
     });
-  };
+  });
+};
 
-  NodeCanvasFactory = class extends BaseCanvasFactory {
-    _createCanvas(width, height) {
-      const Canvas = __non_webpack_require__("canvas");
-      return Canvas.createCanvas(width, height);
-    }
-  };
+class NodeFilterFactory extends BaseFilterFactory {}
 
-  NodeCMapReaderFactory = class extends BaseCMapReaderFactory {
-    _fetchData(url, compressionType) {
-      return fetchData(url).then(data => {
-        return { cMapData: data, compressionType };
-      });
-    }
-  };
+class NodeCanvasFactory extends BaseCanvasFactory {
+  /**
+   * @ignore
+   */
+  _createCanvas(width, height) {
+    const Canvas = __non_webpack_require__("canvas");
+    return Canvas.createCanvas(width, height);
+  }
+}
 
-  NodeStandardFontDataFactory = class extends BaseStandardFontDataFactory {
-    _fetchData(url) {
-      return fetchData(url);
-    }
-  };
+class NodeCMapReaderFactory extends BaseCMapReaderFactory {
+  /**
+   * @ignore
+   */
+  _fetchData(url, compressionType) {
+    return fetchData(url).then(data => {
+      return { cMapData: data, compressionType };
+    });
+  }
+}
+
+class NodeStandardFontDataFactory extends BaseStandardFontDataFactory {
+  /**
+   * @ignore
+   */
+  _fetchData(url) {
+    return fetchData(url);
+  }
 }
 
 export {
   NodeCanvasFactory,
   NodeCMapReaderFactory,
+  NodeFilterFactory,
   NodeStandardFontDataFactory,
 };
