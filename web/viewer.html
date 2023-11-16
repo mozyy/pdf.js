@@ -720,7 +720,7 @@ See https://github.com/adobe-type-tools/cmap-resources
                 />
                 <span id="numPages" class="toolbarLabel"></span>
               </div>
-              <div id="toolbarViewerRight">
+              <div id="toolbarViewerRight" hidden>
                 <!--#if GENERIC-->
                 <button
                   id="openFile"
@@ -757,6 +757,7 @@ See https://github.com/adobe-type-tools/cmap-resources
 
                 <div
                   id="editorModeButtons"
+                  hidden
                   class="splitToolbarButton toggled"
                   role="radiogroup"
                 >
@@ -805,11 +806,13 @@ See https://github.com/adobe-type-tools/cmap-resources
 
                 <div
                   id="editorModeSeparator"
+                  hidden
                   class="verticalToolbarSeparator"
                 ></div>
 
                 <button
                   id="secondaryToolbarToggle"
+                  hidden
                   class="toolbarButton"
                   title="Tools"
                   tabindex="48"
